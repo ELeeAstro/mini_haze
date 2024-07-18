@@ -30,3 +30,7 @@
 *.exe
 *.out
 *.app
+
+# Files
+bin.c
+coag_bin_com.c

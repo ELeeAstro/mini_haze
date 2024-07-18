@@ -1,4 +1,4 @@
-module mini_haze_opacity
+module mini_haze_opacity_mod
   use, intrinsic :: iso_fortran_env ! Requires fortran 2008
   implicit none
 
@@ -17,4 +17,4 @@ module mini_haze_opacity
 
   end subroutine mini_haze_bin_opacity
 
-end module mini_haze_opacity
+end module mini_haze_opacity_mod

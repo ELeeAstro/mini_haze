@@ -5,6 +5,6 @@ prod_scheme = 'constant'
 rho_h = 2.0
 
 rmin = 1e-3
-rmax = 100
+rmax = 100.0
 
 /

@@ -5,11 +5,11 @@ F90 = gfortran
 F90LINKER =  gfortran
 
 #Debugging and development flags
-FFLAGS	= -Og -g -pipe -Wall -Wextra -fbacktrace -fcheck=all -ffpe-trap=invalid,zero,overflow
+#FFLAGS	= -Og -g -pipe -Wall -Wextra -fbacktrace -fcheck=all -ffpe-trap=invalid,zero,overflow
 #FFLAGS	= -Og -pipe -Wall -Wextra -g -fbacktrace
 
 #Serial flags
-#FFLAGS  = -O3 -pipe
+FFLAGS  = -O3 -pipe
 
 # for intel Compiler
 #====================
@@ -36,9 +36,9 @@ LFLAGS    = $(FFLAGS)
 
 OBJECTS = \
 dlsode.o \
-mini_haze_production.o \
-mini_haze_integration.o \
-mini_haze_opacity.o \
+mini_haze_production_mod.o \
+mini_haze_i_dlsode_mod.o \
+mini_haze_opacity_mod.o \
 main.o 
 
 # executable statement

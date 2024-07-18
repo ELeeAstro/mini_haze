@@ -1,4 +1,4 @@
-module mini_haze_production
+module mini_haze_production_mod
   use, intrinsic :: iso_fortran_env ! Requires fortran 2008
   implicit none
 
@@ -7,6 +7,9 @@ module mini_haze_production
   integer, parameter :: dp = REAL64
   !integer, parameter :: qp = REAL128
 
+  real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
+
+  real(dp) :: f_const
 
   public :: find_production_rate
   private :: dp, constant_rate
@@ -24,16 +27,19 @@ contains
 
     select case (prod_scheme)
     case('constant')
-      call constant_rate()
+      call constant_rate(f1)
     end select
 
   end subroutine find_production_rate
 
-  subroutine constant_rate()
+  subroutine constant_rate(f1)
     implicit none
 
+    real(dp), intent(out) :: f1
+
+    f1 = f_const
 
   end subroutine constant_rate
 
 
-end module mini_haze_production
+end module mini_haze_production_mod
