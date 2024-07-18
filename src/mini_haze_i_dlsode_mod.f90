@@ -93,7 +93,7 @@ module mini_haze_i_dlsode_mod
 
     itol = 4
     rtol(:) = 1.0e-3_dp           ! Relative tolerances for each scalar
-    atol(:) = 1.0e-30_dp               ! Absolute tolerance for each scalar (floor value)
+    atol(:) = 1.0e-99_dp               ! Absolute tolerance for each scalar (floor value)
 
     rwork(:) = 0.0_dp
     iwork(:) = 0
@@ -111,8 +111,6 @@ module mini_haze_i_dlsode_mod
 
     !! Give tracer values to y - convert to number density
     y(:) = q(:)*nd_atm
-
-    print*, t_end * 4.0_dp/3.0_dp * pi * r(1)**3 * rho_h
 
     t_now = 0.0_dp
 
@@ -142,10 +140,6 @@ module mini_haze_i_dlsode_mod
 
     !! Give y values to tracers - convert to number mixing ratio
     q(:) = y(:)/nd_atm
-
-    print*, sum(y(:) * 4.0_dp/3.0_dp * pi * r(:)**3 * rho_h)
-
-    stop
 
   end subroutine mini_haze_i_dlsode
 
@@ -312,26 +306,26 @@ module mini_haze_i_dlsode_mod
       do j = 1, n_bin
 
         if (j >= i) then
-          !! Particle size is greater or equal than current bin
+          ! Particle size is greater or equal than current bin
           cycle
         end if
 
         d_vf = abs(vf(i) - vf(j))
 
         Stk = (vf(j)*d_vf)/(r(i)*grav)
-        if (Kn(j) >= 1.0_dp) then
+        if (Kn(i) >= 1.0_dp) then
           E = 1.0_dp
         else 
           E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
         end if
 
-        K_coal(i,j) = 0.0_dp !pi * (r(i) + r(j))**2 * d_vf * E
+        K_coal(i,j) = pi * (r(i) + r(j))**2 * d_vf * E
 
       end do
     end do
 
     !! Total kernel is coagulation + coalescence
-    Kr(:,:) = K_coag(:,:) + K_coal(:,:)
+    Kr(:,:) = K_coag(:,:) !+ K_coal(:,:)
 
   end subroutine calc_kernel
 
