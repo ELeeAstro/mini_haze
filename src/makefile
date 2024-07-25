@@ -37,7 +37,7 @@ LFLAGS    = $(FFLAGS)
 OBJECTS = \
 dlsode.o \
 mini_haze_production_mod.o \
-mini_haze_i_dlsode_mod.o \
+mini_haze_i_dlsode_mom_mod.o \
 mini_haze_opacity_mod.o \
 main.o 
 

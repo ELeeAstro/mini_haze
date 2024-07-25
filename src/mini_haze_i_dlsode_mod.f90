@@ -72,8 +72,8 @@ module mini_haze_i_dlsode_mod
     Rd = R_gas/mu_in ! Specific gas constant [erg g-1 K-1]
     rho = P_cgs/(Rd * T_in) ! Mass density [g cm-3]
 
-    call calc_kernel(T_in, rho, mu_in, grav_cgs, vf)
-    !call calc_kernel_analy()
+    !call calc_kernel(T_in, rho, mu_in, grav_cgs, vf)
+    call calc_kernel_analy()
 
     ! -----------------------------------------
     ! ***  parameters for the DLSODE solver  ***
@@ -110,7 +110,7 @@ module mini_haze_i_dlsode_mod
     allocate(y(n_bin))
 
     !! Give tracer values to y - convert to number density
-    y(:) = q(:)*nd_atm
+    y(:) = q(:)!*nd_atm
 
     t_now = 0.0_dp
 
@@ -139,7 +139,7 @@ module mini_haze_i_dlsode_mod
     end do
 
     !! Give y values to tracers - convert to number mixing ratio
-    q(:) = y(:)/nd_atm
+    q(:) = y(:)!/nd_atm
 
   end subroutine mini_haze_i_dlsode
 
@@ -150,6 +150,8 @@ module mini_haze_i_dlsode_mod
     real(dp), intent(inout) :: time
     real(dp), dimension(n_eq), intent(inout) :: y
     real(dp), dimension(n_eq), intent(inout) :: f
+
+    real(dp) :: msum, mij
 
     integer :: i, j, k
 
@@ -162,36 +164,48 @@ module mini_haze_i_dlsode_mod
     !! Find the RHS of the ODE for each particle bin size
 
     !! For the first bin, add a production rate source term
-    call find_production_rate(prod_scheme, f(1))
+    call find_production_rate(prod_scheme, n_eq, f)
 
     !! Calculate the third term in Brauer et al. 2008 (Equation A.7)
     !! This is loss from a bin from collisions
     !! The loss rate depends on the kernel * i number density * j number density
-    do k = 1, n_bin
-      do j = 1, n_bin
-        f(k) = f(k) - y(j) * y(k) * Kr(j,k)
+    do k = 1, n_bin-1
+      do j = 1, n_bin-1
+        f(k) = f(k) - y(k) * y(j) * Kr(k,j)
       end do
     end do
     
     !! Calculate the first term in Brauer et al. 2008 (Equation A.7)
     !! This is gain into a bin for self size collisions
-    do k = 2, n_bin
+    do k = 2, n_bin-1
       do i = 1, k
-        f(k) = f(k) + 0.5_dp * y(i) * y(i) * Kr(i,i) * C(i,i,k)
+        msum = m(i) + m(i)
+        if ((msum < m(k)) .and. (msum >= m(k-1))) then 
+          f(k) = f(k) + y(i) * y(i) * Kr(i,i) * C(i,i,1)
+        else if((msum < m(k+1)) .and. (msum >= m(k))) then 
+          f(k) = f(k) + y(i) * y(i) * Kr(i,i) * C(i,i,2)
+        end if
       end do
     end do
 
     !! Calculate the second term in Brauer et al. 2008 (Equation A.7)
     !! This is gain into a bin for different sized collisions
-    do k = 2, n_bin
+    do k = 2, n_bin-1
       do i = 1, k
         do j = 1, i-1
-          f(k) = f(k) + y(i) * y(j) * Kr(i,j) * C(i,j,k)
+          mij = m(i) + m(j)
+          if ((mij < m(k)) .and. (mij >= m(k-1))) then
+            f(k) = f(k) + y(i) * y(j) * Kr(i,j) * C(i,j,1)
+          else if ((mij < m(k+1)) .and. (mij >= m(k))) then
+            f(k) = f(k) + y(i) * y(j) * Kr(i,j) * C(i,j,2)
+          end if
         end do
       end do
     end do
 
     !print*,time,f(:)
+
+    f(:) = f(:)
 
   end subroutine RHS_bin
 
@@ -325,7 +339,7 @@ module mini_haze_i_dlsode_mod
     end do
 
     !! Total kernel is coagulation + coalescence
-    Kr(:,:) = K_coag(:,:) !+ K_coal(:,:)
+    Kr(:,:) = K_coag(:,:) + K_coal(:,:)
 
   end subroutine calc_kernel
 
@@ -333,6 +347,8 @@ module mini_haze_i_dlsode_mod
     implicit none
 
     integer :: i, j
+
+    Kr(:,:) = 0.0_dp
 
     do i = 1, n_bin
       do j = 1, n_bin
@@ -350,7 +366,7 @@ module mini_haze_i_dlsode_mod
     real(dp) :: eps, msum
 
     !! Allocate eps array
-    allocate(C(n_bin,n_bin,n_bin))
+    allocate(C(n_bin,n_bin,2))
     !! Calculate the epsilon (C_ijk) matrix from Brauer et al. 2008
 
     C(:,:,:) = 0.0_dp
@@ -358,14 +374,15 @@ module mini_haze_i_dlsode_mod
     do i = 1, n_bin
       do j = 1, n_bin
         msum = m(i) + m(j)
-        do k = 2, n_bin
+        do k = 2, n_bin-1
           !! Find nearest neighbours
-          if ((msum > m(k-1)) .and. (msum <= m(k))) then
+          if ((msum < m(k)) .and. (msum >= m(k-1))) then
             !! Sum of collision mass lies between k-1 and k mass bin
-            eps = (m(k) - msum)/(m(k) - m(k-1))
-            C(i,j,k) = 1.0_dp - eps
-            C(i,j,k-1) = eps
-            
+            eps = (msum - m(k-1))/(m(k) - m(k-1))/( m(i)*m(j) )
+            C(i,j,1) = eps
+          else if ((msum >= m(k)) .and. (msum < m(k+1))) then
+            eps = (m(k+1) - msum)/(m(k+1) - m(k))/( m(i)*m(j) )
+            C(i,j,2) = eps
           end if
         end do
       end do
@@ -380,8 +397,9 @@ module mini_haze_i_dlsode_mod
 
     integer :: u_nml, i
     real(dp) :: lrmin, lrmax, rmin, rmax
+    real(dp) :: lmmin, lmmax, mmin, mmax
 
-    namelist /mini_haze_nml/ prod_scheme, rho_h, rmin, rmax
+    namelist /mini_haze_nml/ prod_scheme, rho_h, rmin, rmax, mmin, mmax
 
     n_bin = n_eq
 
@@ -396,6 +414,29 @@ module mini_haze_i_dlsode_mod
     
     !! Allocate other arrays
     allocate(re(n_bin+1), r(n_bin), me(n_bin+1), m(n_bin))
+
+
+    !! For testing do other way round
+    lmmin = log10(mmin)
+    lmmax = log10(mmax)
+    do i = 1, n_bin+1
+      me(i) = 10.0_dp**((lmmax-lmmin) * real(i-1,dp) / real(n_bin+1-1,dp) + lmmin)
+    end do
+
+    !! Bin centers are the central value of each bin edge
+    m(:) = (me(1:n_bin) + me(2:n_bin+1))/2.0_dp
+
+    !! Calculate radii of bin edges and center
+    re(:) = ((3.0*me(:))/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
+    r(:) = ((3.0*m(:))/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp) 
+
+    print*,re(:)*1e4_dp
+    print*,r(:)*1e4_dp
+
+    print*, me(:)
+    print*, m(:)
+
+    return
 
     !! Calculate log spaced values between rmin and rmax
     !! for the bin edges - convert to cm here

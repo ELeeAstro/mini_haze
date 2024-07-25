@@ -9,37 +9,43 @@ module mini_haze_production_mod
 
   real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
 
-  real(dp) :: f_const
+  real(dp), allocatable, dimension(:) :: f_prod
 
-  public :: find_production_rate
-  private :: dp, constant_rate
+  logical :: first_call = .True.
+
+  public :: mini_haze_prod, find_production_rate
+  private :: dp
 
 contains
 
   !! Landing routine for the production rate schemes
-  subroutine find_production_rate(prod_scheme, f1)
+  !! Called before main mini-haze integration to save production rates 
+  subroutine mini_haze_prod(n_eq, f_prod_in)
     implicit none
 
-    character(len=20), intent(in) :: prod_scheme
+    integer, intent(in) :: n_eq
 
-    real(dp), intent(out) :: f1
+    real(dp), dimension(n_eq), intent(in) :: f_prod_in
 
+    if (first_call .eqv. .True.) then
+      allocate(f_prod(n_eq))
+      first_call = .False.
+    end if
 
-    select case (prod_scheme)
-    case('constant')
-      call constant_rate(f1)
-    end select
+    f_prod(:) = f_prod_in(:)
+
+  end subroutine mini_haze_prod
+
+  !! Routine called by the mini-haze integrator
+  subroutine find_production_rate(n_eq, f_prod_int)
+    implicit none
+
+    integer, intent(in) :: n_eq
+
+    real(dp), dimension(n_eq), intent(out) :: f_prod_int
+
+    f_prod_int(:) = f_prod(:)
 
   end subroutine find_production_rate
-
-  subroutine constant_rate(f1)
-    implicit none
-
-    real(dp), intent(out) :: f1
-
-    f1 = f_const
-
-  end subroutine constant_rate
-
 
 end module mini_haze_production_mod
