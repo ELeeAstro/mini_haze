@@ -10,13 +10,13 @@ program mini_haze_main
   double precision, parameter :: amu = 1.66054e-24
 
 
-  integer :: n_eq, n_bin, n_steps, n, u
+  integer :: n_eq, n_bin, n_steps, n_gas, n, u
   double precision :: temp, p, mu, g, t_step, nd_atm, rho
   double precision :: F0, mu_z, sig, m0
 
   double precision :: bulk_den, r
   
-  double precision, allocatable, dimension(:) :: q
+  double precision, allocatable, dimension(:) :: q, VMR
 
   !! Mock atmosphere conditions
   temp = 700.0! Temperature [K]
@@ -40,6 +40,13 @@ program mini_haze_main
   !! q here is the volume mixing ratio
   allocate(q(n_eq))
   q(:) = 1.0e-30
+
+  !! Allocate the background gas VMR (e.g. H2, He, H)
+  n_gas = 3
+  allocate(VMR(n_gas))
+  VMR(1) = 0.85
+  VMR(2) = 0.15
+  VMR(3) = 1e-6
 
   !! Give initial values analytical solution
 
@@ -72,7 +79,7 @@ program mini_haze_main
 
   do n = 1, n_steps
 
-    call mini_haze_i_dlsode_mom(n_eq, temp, p, mu, g, t_step, q)
+    call mini_haze_i_dlsode_mom(n_eq, temp, p, mu, g, t_step, q, n_gas, VMR)
 
     r = ((3.0*(q(2)*rho)/(q(1)*nd_atm))/(4.0*pi*bulk_den))**(1.0/3.0)
 

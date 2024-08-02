@@ -29,31 +29,41 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: mfp, eta
 
   !! Diameter, LJ potential and molecular weight for background gases
-  real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
-  real(dp), parameter :: d_CH4 = 3.758e-8_dp, LJ_CH4 = 148.6_dp * kb, molg_CH4 = 16.0425_dp
-  real(dp), parameter :: d_CO = 3.690e-8_dp, LJ_CO = 91.7_dp * kb, molg_CO = 28.0101_dp
-  real(dp), parameter :: d_CO2 = 3.941e-8_dp, LJ_CO2 = 195.2_dp * kb, molg_CO2 = 44.0095_dp
+  real(dp), parameter :: d_OH = 3.06e-8_dp, LJ_OH = 100.0_dp * kb, molg_OH = 17.00734_dp  ! estimate
   real(dp), parameter :: d_H2 = 2.827e-8_dp, LJ_H2 = 59.7_dp * kb, molg_H2 = 2.01588_dp
   real(dp), parameter :: d_H2O = 2.641e-8_dp, LJ_H2O = 809.1_dp * kb, molg_H2O = 18.01528_dp
+  real(dp), parameter :: d_H = 2.5e-8_dp, LJ_H = 30.0_dp * kb, molg_H = 1.00794_dp
+  real(dp), parameter :: d_CO = 3.690e-8_dp, LJ_CO = 91.7_dp * kb, molg_CO = 28.0101_dp
+  real(dp), parameter :: d_CO2 = 3.941e-8_dp, LJ_CO2 = 195.2_dp * kb, molg_CO2 = 44.0095_dp
+  real(dp), parameter :: d_O = 2.66e-8_dp, LJ_O = 70.0_dp * kb, molg_O = 15.99940_dp
+  real(dp), parameter :: d_CH4 = 3.758e-8_dp, LJ_CH4 = 148.6_dp * kb, molg_CH4 = 16.0425_dp
+  real(dp), parameter :: d_C2H2 = 4.033e-8_dp, LJ_C2H2 = 231.8_dp * kb, molg_C2H2 = 26.0373_dp
   real(dp), parameter :: d_NH3 = 2.900e-8_dp, LJ_NH3 = 558.3_dp * kb, molg_NH3 = 17.03052_dp
   real(dp), parameter :: d_N2 = 3.798e-8_dp, LJ_N2 = 71.4_dp * kb, molg_N2 = 14.0067_dp
-  real(dp), parameter :: d_H = 2.5e-8_dp, LJ_H =  30.0_dp * kb, molg_H = 1.00794_dp
+  real(dp), parameter :: d_HCN = 3.630e-8_dp, LJ_HCN = 569.1_dp * kb, molg_HCN = 27.0253_dp
+  real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
+
+  !! Constuct required arrays for calculating gas mixtures
+  real(dp), dimension(3) :: d_g = (/d_H2, d_He, d_H/)
+  real(dp), dimension(3) :: d_LJ = (/LJ_H2, LJ_He, LJ_H/)
+  real(dp), dimension(3) :: d_molg = (/molg_H2, molg_He, molg_H/)
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
 
   contains
 
-  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q)
+  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, n_gas, g_VMR)
     implicit none
 
     ! Input variables
-    integer, intent(in) :: n_eq
+    integer, intent(in) :: n_eq, n_gas
     real(dp), intent(in) :: T_in, P_in, mu_in, grav_in, t_end
 
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
+    real(dp), dimension(n_gas), intent(in) :: g_VMR
 
-    integer :: ncall
+    integer :: ncall, n
 
     ! Time controls
     real(dp) :: t_now
@@ -64,6 +74,10 @@ module mini_haze_i_dlsode_mom_mod
     integer, allocatable, dimension(:) :: iwork
     integer :: itol, itask, istate, iopt, mf
     integer :: rworkdim, iworkdim
+
+    !! Work variables
+    real(dp), dimension(n_gas) :: g_eta
+    real(dp) :: bot, top
 
     !! Find the number density of the atmosphere
     T = T_in
@@ -78,9 +92,22 @@ module mini_haze_i_dlsode_mom_mod
     !! Mass density of layer
     rho = (P_cgs*mu_in*amu)/(kb * T_in) ! Mass density [g cm-3]
 
-    !! Calculate dynamical viscosity for this layer
-    eta = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_H2*amu)*kb*T_in)/(pi*d_H2**2)) &
-      & * ((((kb*T_in)/LJ_H2)**(0.16_dp))/1.22_dp)
+    !! Calculate dynamical viscosity for this layer - do square root mixing law from Rosner 2012
+    do n = 1, n_gas
+      g_eta(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(d_molg(n)*amu)*kb*T_in)/(pi*d_g(n)**2)) &
+        & * ((((kb*T_in)/d_LJ(n))**(0.16_dp))/1.22_dp)
+    end do
+
+    !! Mass square root mixing law
+    top = 0.0_dp
+    bot = 0.0_dp
+    do n = 1, n_gas
+      top = top + sqrt(d_molg(n)*amu)*g_VMR(n)*g_eta(n)
+      bot = bot + sqrt(d_molg(n)*amu)*g_VMR(n)
+    end do
+
+    !! Mixture dynamical viscosity
+    eta = top/bot
 
     !! Calculate mean free path for this layer
     mfp = (2.0_dp*eta/rho) * sqrt((pi * mu_in)/(8.0_dp*R_gas*T_in))
@@ -134,7 +161,7 @@ module mini_haze_i_dlsode_mom_mod
 
     ncall = 0
 
-    do while (t_now < t_end)
+    do while ((t_now < t_end) .and. (ncall < 100))
 
       call DLSODE (RHS_mom, n_eq, y, t_now, t_end, itol, rtol, atol, itask, &
         & istate, iopt, rwork, rworkdim, iwork, iworkdim, jac_dum, mf)
