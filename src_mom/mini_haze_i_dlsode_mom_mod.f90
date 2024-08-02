@@ -45,14 +45,14 @@ module mini_haze_i_dlsode_mom_mod
 
   !! Constuct required arrays for calculating gas mixtures
   real(dp), dimension(3) :: d_g = (/d_H2, d_He, d_H/)
-  real(dp), dimension(3) :: d_LJ = (/LJ_H2, LJ_He, LJ_H/)
-  real(dp), dimension(3) :: d_molg = (/molg_H2, molg_He, molg_H/)
+  real(dp), dimension(3) :: LJ_g = (/LJ_H2, LJ_He, LJ_H/)
+  real(dp), dimension(3) :: molg_g = (/molg_H2, molg_He, molg_H/)
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
 
   contains
 
-  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, n_gas, g_VMR)
+  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, n_gas, VMR_g)
     implicit none
 
     ! Input variables
@@ -61,7 +61,7 @@ module mini_haze_i_dlsode_mom_mod
 
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
-    real(dp), dimension(n_gas), intent(in) :: g_VMR
+    real(dp), dimension(n_gas), intent(in) :: VMR_g
 
     integer :: ncall, n
 
@@ -93,17 +93,15 @@ module mini_haze_i_dlsode_mom_mod
     rho = (P_cgs*mu_in*amu)/(kb * T_in) ! Mass density [g cm-3]
 
     !! Calculate dynamical viscosity for this layer - do square root mixing law from Rosner 2012
-    do n = 1, n_gas
-      g_eta(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(d_molg(n)*amu)*kb*T_in)/(pi*d_g(n)**2)) &
-        & * ((((kb*T_in)/d_LJ(n))**(0.16_dp))/1.22_dp)
-    end do
-
-    !! Mass square root mixing law
     top = 0.0_dp
     bot = 0.0_dp
     do n = 1, n_gas
-      top = top + sqrt(d_molg(n)*amu)*g_VMR(n)*g_eta(n)
-      bot = bot + sqrt(d_molg(n)*amu)*g_VMR(n)
+      g_eta(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T_in)/(pi*d_g(n)**2)) &
+        & * ((((kb*T_in)/LJ_g(n))**(0.16_dp))/1.22_dp)
+
+      top = top + sqrt(molg_g(n)*amu)*VMR_g(n)*g_eta(n)
+      bot = bot + sqrt(molg_g(n)*amu)*VMR_g(n)
+
     end do
 
     !! Mixture dynamical viscosity
