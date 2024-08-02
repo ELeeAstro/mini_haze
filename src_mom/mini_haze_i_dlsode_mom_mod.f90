@@ -17,13 +17,12 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: T, nd_atm, rho, P_cgs, grav_cgs
 
   !! Variables needed to be sent in from outside
-  character(len=20) :: prod_scheme
   real(dp) :: Prod_in ! Mass mixing ratio production rate of precurser molecules
   real(dp) :: r_mon ! Haze particle monomer size
   real(dp) :: rho_h ! bulk density of haze [g cm-3]
   real(dp) :: p_deep ! Deep removal pressure level
   real(dp) :: tau_loss ! Deep removal loss timescale
-  real(dp) :: tau_decay, tau_act, tau_form
+  real(dp) :: tau_decay, tau_act, tau_form ! Precurser timescales
 
   real(dp) :: V_mon ! Haze particle monomer volume
 
@@ -117,7 +116,7 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Give tracer values to y - convert to number density
     y(1) = q(1)*nd_atm ! Convert to real number density
-    y(2) = q(2)*rho   ! Convery to real mass
+    y(2) = q(2)*rho   ! Convert to real mass
     y(3) = q(3)
     y(4) = q(4)
 
@@ -201,6 +200,7 @@ module mini_haze_i_dlsode_mom_mod
     !! Add a production rate source term for each moment and precursor activation
     call find_production_rate(n_eq, f_prod, f_form)
 
+    !! Calculate final net flux rate for each tracer
     f(1) = f_prod(1) - f_coal - f_coag - f_loss(1)
     f(2) = f_prod(2) - f_loss(2)
     f(3) = f_prod(3) - f_act - f_decay_pre
@@ -212,7 +212,6 @@ module mini_haze_i_dlsode_mom_mod
       
 
   end subroutine RHS_mom
-
 
   !! Routine called by the mini-haze integrator - calculates production rates from mass mixing ratio rate
   subroutine find_production_rate(n_eq, f_prod, f_form)
@@ -246,13 +245,13 @@ module mini_haze_i_dlsode_mom_mod
       return
     end if
 
-    !! Condensed mass
+    !! Mean mass of particle
     m_c = y(2)/y(1)
 
-    !! Mean radius
+    !! Mass weighted mean radius of particle
     r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
 
-    regime1 = 8.0_dp * sqrt((pi*kb*T)/(m_c)) * r**2 * y(1)**2
+    regime1 = 8.0_dp * sqrt((pi*kb*T)/m_c) * r**2 * y(1)**2
 
     !! Knudsen number
     Kn = mfp/r
@@ -282,10 +281,10 @@ module mini_haze_i_dlsode_mom_mod
       return
     end if
 
-    !! Condensed mass
+    !! Mean mass of particle
     m_c = y(2)/y(1)
 
-    !! Mean radius
+    !! Mass weighted mean radius of particle
     r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
 
     !! Knudsen number
@@ -303,7 +302,7 @@ module mini_haze_i_dlsode_mom_mod
     d_vf = eps * vf
 
     !! Calculate E
-    if (Kn > 1.0_dp) then
+    if (Kn >= 1.0_dp) then
       !! E = 1 when Kn > 1
       E = 1.0_dp
     else

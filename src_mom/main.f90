@@ -60,13 +60,13 @@ program mini_haze_main
   rho_h = 2.0
   p_deep = 1e5
   tau_loss = 1e3
-  tau_act = 100.0
-  tau_decay = 1.0
-  tau_form = 100.0
+  tau_act = 1000.0
+  tau_decay = 100.0
+  tau_form = 1000.0
 
   bulk_den = rho_h
 
-  open(newunit=u,file='test.txt',action='readwrite')
+  open(newunit=u,file='mom_test.txt',action='readwrite')
 
   write(u,*) q(:)
 
