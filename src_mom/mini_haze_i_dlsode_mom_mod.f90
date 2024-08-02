@@ -26,9 +26,18 @@ module mini_haze_i_dlsode_mom_mod
 
   real(dp) :: V_mon ! Haze particle monomer volume
 
-  real(dp), parameter :: d_H2 = 2.827e-8_dp, LJ_H2 = 59.7_dp * kb, molg_H2 = 2.01588_dp
-  real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
   real(dp) :: mfp, eta
+
+  !! Diameter, LJ potential and molecular weight for background gases
+  real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
+  real(dp), parameter :: d_CH4 = 3.758e-8_dp, LJ_CH4 = 148.6_dp * kb, molg_CH4 = 16.0425_dp
+  real(dp), parameter :: d_CO = 3.690e-8_dp, LJ_CO = 91.7_dp * kb, molg_CO = 28.0101_dp
+  real(dp), parameter :: d_CO2 = 3.941e-8_dp, LJ_CO2 = 195.2_dp * kb, molg_CO2 = 44.0095_dp
+  real(dp), parameter :: d_H2 = 2.827e-8_dp, LJ_H2 = 59.7_dp * kb, molg_H2 = 2.01588_dp
+  real(dp), parameter :: d_H2O = 2.641e-8_dp, LJ_H2O = 809.1_dp * kb, molg_H2O = 18.01528_dp
+  real(dp), parameter :: d_NH3 = 2.900e-8_dp, LJ_NH3 = 558.3_dp * kb, molg_NH3 = 17.03052_dp
+  real(dp), parameter :: d_N2 = 3.798e-8_dp, LJ_N2 = 71.4_dp * kb, molg_N2 = 14.0067_dp
+  real(dp), parameter :: d_H = 2.5e-8_dp, LJ_H =  30.0_dp * kb, molg_H = 1.00794_dp
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
 
@@ -114,11 +123,8 @@ module mini_haze_i_dlsode_mom_mod
 
     allocate(y(n_eq))
 
-    !! Give tracer values to y - convert to number density
-    y(1) = q(1)*nd_atm ! Convert to real number density
-    y(2) = q(2)*rho   ! Convert to real mass
-    y(3) = q(3)
-    y(4) = q(4)
+    !! Give tracer values to y
+    y(:) = q(:)
 
     t_now = 0.0_dp
 
@@ -148,11 +154,8 @@ module mini_haze_i_dlsode_mom_mod
 
     !print*, t_now, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp) * 1e4_dp
 
-    !! Give y values to tracers - convert to number mixing ratio + mass mixing ratio
-    q(1) = y(1)/nd_atm
-    q(2) = y(2)/rho
-    q(3) = y(3)
-    q(4) = y(4)
+    !! Give y values to tracers
+    q(:) = y(:)
 
     deallocate(y, rtol, atol, rwork, iwork)
 
@@ -174,9 +177,12 @@ module mini_haze_i_dlsode_mom_mod
     !! The values of each bin (y) are typically kept constant
     !! Basically, you solve for the RHS of the ODE for each moment
 
-    f(:) = 0.0_dp
+    !! Convert y to real numbers to calculate f
+    y(1) = y(1)*nd_atm ! Convert to real number density
+    y(2) = y(2)*rho   ! Convert to real mass density
 
     !! Find the RHS of the ODE for each particle bin size
+    f(:) = 0.0_dp
 
     !! Calculate the coalesence loss rate for the zeroth moment
     call calc_coal(n_eq, y, f_coal)
@@ -206,10 +212,17 @@ module mini_haze_i_dlsode_mom_mod
     f(3) = f_prod(3) - f_act - f_decay_pre
     f(4) = f_prod(4) + f_act - f_form - f_decay_act
 
+    !! Convert f to ratios
+    f(1) = f(1)/nd_atm
+    f(2) = f(2)/rho
+      
+    !! Convert y back to ratios
+    y(1) = y(1)/nd_atm
+    y(2) = y(2)/rho 
+
     !print*, 'y', time, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp) * 1e4_dp
     !print*, 'f', f(:), f_prod(:)
     !print*, 'f2', f_coal, f_coag, f_loss, f_act, f_decay_pre, f_decay_act, f_form
-      
 
   end subroutine RHS_mom
 

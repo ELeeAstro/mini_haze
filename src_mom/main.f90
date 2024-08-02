@@ -60,9 +60,9 @@ program mini_haze_main
   rho_h = 2.0
   p_deep = 1e5
   tau_loss = 1e3
-  tau_act = 1000.0
-  tau_decay = 100.0
-  tau_form = 1000.0
+  tau_act = 1.0
+  tau_decay = 10000.0
+  tau_form = 1.0
 
   bulk_den = rho_h
 
