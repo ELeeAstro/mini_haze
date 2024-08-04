@@ -14,7 +14,7 @@ program mini_haze_main
   double precision :: temp, p, mu, g, t_step, nd_atm, rho
   double precision :: F0, mu_z, sig, m0
 
-  double precision :: bulk_den, r
+  double precision :: r, m_c, vf
   
   double precision, allocatable, dimension(:) :: q, VMR
 
@@ -26,7 +26,7 @@ program mini_haze_main
 
   n_bin = 2 ! Number of size bins = 2 for moment method
   n_eq = n_bin + 2 ! Number of size bins + precursor tracers
-  n_steps = int(1e5) ! Number of time steps
+  n_steps = int(1e6) ! Number of time steps
  
   rho = (p*10.0*mu*amu)/(kb * temp) ! Mass density [g cm-3]
   nd_atm = (p*10.0)/(kb*temp) ! Number density [cm-3]
@@ -64,14 +64,12 @@ program mini_haze_main
 
   !! Send some parameters to the integration module
   r_mon = 1e-7
-  rho_h = 2.0
+  rho_h = 1.0
   p_deep = 1e5
   tau_loss = 1e3
   tau_act = 1.0
   tau_decay = 10000.0
   tau_form = 1.0
-
-  bulk_den = rho_h
 
   open(newunit=u,file='mom_test.txt',action='readwrite')
 
@@ -79,11 +77,13 @@ program mini_haze_main
 
   do n = 1, n_steps
 
-    call mini_haze_i_dlsode_mom(n_eq, temp, p, mu, g, t_step, q, n_gas, VMR)
+    call mini_haze_i_dlsode_mom(n_eq, temp, p, mu, g, t_step, q, vf,  n_gas, VMR)
 
-    r = ((3.0*(q(2)*rho)/(q(1)*nd_atm))/(4.0*pi*bulk_den))**(1.0/3.0)
+    m_c = (q(2)*rho)/(q(1)*nd_atm)
 
-    print*, n*t_step, n, q(:), r * 1e4, Prod_in
+    r = ((3.0*m_c)/(4.0*pi*rho_h))**(1.0/3.0)
+
+    print*, n*t_step/86400, n, q(:), r * 1e4, Prod_in, vf
 
     write(u,*) q(:)
 

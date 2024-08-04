@@ -52,16 +52,17 @@ module mini_haze_i_dlsode_mom_mod
 
   contains
 
-  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, n_gas, VMR_g)
+  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, vf, n_gas, VMR_g)
     implicit none
 
     ! Input variables
     integer, intent(in) :: n_eq, n_gas
     real(dp), intent(in) :: T_in, P_in, mu_in, grav_in, t_end
+    real(dp), dimension(n_gas), intent(in) :: VMR_g
 
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
-    real(dp), dimension(n_gas), intent(in) :: VMR_g
+    real(dp), intent(out) :: vf
 
     integer :: ncall, n
 
@@ -76,8 +77,8 @@ module mini_haze_i_dlsode_mom_mod
     integer :: rworkdim, iworkdim
 
     !! Work variables
-    real(dp), dimension(n_gas) :: g_eta
-    real(dp) :: bot, top
+    real(dp) :: eta_g, bot, top
+    real(dp) :: m_c, r, Kn, beta
 
     !! Find the number density of the atmosphere
     T = T_in
@@ -96,12 +97,10 @@ module mini_haze_i_dlsode_mom_mod
     top = 0.0_dp
     bot = 0.0_dp
     do n = 1, n_gas
-      g_eta(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T_in)/(pi*d_g(n)**2)) &
+      eta_g = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T_in)/(pi*d_g(n)**2)) &
         & * ((((kb*T_in)/LJ_g(n))**(0.16_dp))/1.22_dp)
-
-      top = top + sqrt(molg_g(n)*amu)*VMR_g(n)*g_eta(n)
+      top = top + sqrt(molg_g(n)*amu)*VMR_g(n)*eta_g
       bot = bot + sqrt(molg_g(n)*amu)*VMR_g(n)
-
     end do
 
     !! Mixture dynamical viscosity
@@ -179,12 +178,33 @@ module mini_haze_i_dlsode_mom_mod
 
     !print*, t_now, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp) * 1e4_dp
 
+    !! Calculate vf from final results of interation
+    !! Mean mass of particle
+    m_c = (y(2)*rho)/(y(1)*nd_atm)
+
+    !! Mass weighted mean radius of particle
+    r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
+
+    !! Knudsen number
+    Kn = mfp/r
+
+    !! Cunningham slip factor
+    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
+
+    !! Settling velocity
+    vf = (2.0_dp * beta * grav_cgs * r**2 * rho_h)/(9.0_dp * eta) & 
+      & * (1.0_dp + & 
+      & ((0.45_dp*grav_cgs*r**3*rho*rho_h)/(54.0_dp*eta**2))**(2.0_dp/5.0_dp))**(-5.0_dp/4.0_dp)
+
+    !! Convert vf to mks
+    vf = vf / 100.0_dp 
+
     !! Give y values to tracers
     q(:) = y(:)
 
     deallocate(y, rtol, atol, rwork, iwork)
 
-  end subroutine mini_haze_i_dlsode_mom
+    end subroutine mini_haze_i_dlsode_mom
 
   subroutine RHS_mom(n_eq, time, y, f)
     implicit none
