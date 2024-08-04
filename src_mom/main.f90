@@ -26,7 +26,7 @@ program mini_haze_main
 
   n_bin = 2 ! Number of size bins = 2 for moment method
   n_eq = n_bin + 2 ! Number of size bins + precursor tracers
-  n_steps = int(1e6) ! Number of time steps
+  n_steps = int(1e5) ! Number of time steps
  
   rho = (p*10.0*mu*amu)/(kb * temp) ! Mass density [g cm-3]
   nd_atm = (p*10.0)/(kb*temp) ! Number density [cm-3]

@@ -12,6 +12,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), parameter :: kb = 1.380649e-16_dp
   real(dp), parameter :: R_gas = 8.31446261815324e7_dp
   real(dp), parameter :: amu = 1.66053906892e-24_dp
+  real(dp), parameter :: third = 1.0_dp/3.0_dp
 
   !! Global variables
   real(dp) :: T, nd_atm, rho, P_cgs, grav_cgs
@@ -183,7 +184,7 @@ module mini_haze_i_dlsode_mom_mod
     m_c = (y(2)*rho)/(y(1)*nd_atm)
 
     !! Mass weighted mean radius of particle
-    r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
+    r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(third)
 
     !! Knudsen number
     Kn = mfp/r
@@ -194,7 +195,7 @@ module mini_haze_i_dlsode_mom_mod
     !! Settling velocity
     vf = (2.0_dp * beta * grav_cgs * r**2 * rho_h)/(9.0_dp * eta) & 
       & * (1.0_dp + & 
-      & ((0.45_dp*grav_cgs*r**3*rho*rho_h)/(54.0_dp*eta**2))**(2.0_dp/5.0_dp))**(-5.0_dp/4.0_dp)
+      & ((0.45_dp*grav_cgs*r**3*rho*rho_h)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
 
     !! Convert vf to mks
     vf = vf / 100.0_dp 
@@ -217,6 +218,7 @@ module mini_haze_i_dlsode_mom_mod
     real(dp) :: f_coal, f_coag
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(n_eq) :: f_loss, f_prod
+    real(dp) :: m_c, r, Kn, beta
 
     !! In this routine, you calculate the new fluxes (f) for each moment
     !! The values of each bin (y) are typically kept constant
@@ -227,16 +229,37 @@ module mini_haze_i_dlsode_mom_mod
     y(2) = y(2)*rho   ! Convert to real mass density
 
     !! Find the RHS of the ODE for each particle bin size
-    f(:) = 0.0_dp
+    !f(:) = 0.0_dp
 
-    !! Calculate the coalesence loss rate for the zeroth moment
-    call calc_coal(n_eq, y, f_coal)
+    if (y(1) < 1e-20_dp) then
+      !! If number density is too low, set fluxes to zero
+      f_coag = 0.0_dp
+      f_coal = 0.0_dp
+    else
+      !! Calculate coagulation and coalesence fluxes
 
-    !! Calculate the coagulation loss rate for the zeroth moment
-    call calc_coag(n_eq, y, f_coag)
+      !! Mean mass of particle
+      m_c = y(2)/y(1)
+
+      !! Mass weighted mean radius of particle
+      r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(third)
+
+      !! Knudsen number
+      Kn = mfp/r
+
+      !! Cunningham slip factor
+      beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
+
+      !! Calculate the coagulation loss rate for the zeroth moment
+      call calc_coag(n_eq, y, f_coag, m_c, r, beta)
+
+      !! Calculate the coalesence loss rate for the zeroth moment
+      call calc_coal(n_eq, y, f_coal, r, Kn, beta)
+
+    end if
 
     !! Add thermal decomposition loss term if above given pressure level (pa)
-    if (P_cgs >= p_deep) then
+    if (P_cgs > p_deep) then
       f_loss(:) = y(:)/tau_loss
     else
       f_loss(:) = 0.0_dp
@@ -288,34 +311,18 @@ module mini_haze_i_dlsode_mom_mod
 
   end subroutine find_production_rate
 
-  subroutine calc_coag(n_eq, y, f_coag)
+  subroutine calc_coag(n_eq, y, f_coag, m_c, r, beta)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: m_c, r, beta
 
     real(dp), intent(inout) :: f_coag
 
-    real(dp) :: m_c, r, Kn, beta, regime1, regime2
-
-    if (y(1) <= 1.0e-20_dp) then
-      f_coag = 0.0_dp
-      return
-    end if
-
-    !! Mean mass of particle
-    m_c = y(2)/y(1)
-
-    !! Mass weighted mean radius of particle
-    r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
+    real(dp) :: regime1, regime2
 
     regime1 = 8.0_dp * sqrt((pi*kb*T)/m_c) * r**2 * y(1)**2
-
-    !! Knudsen number
-    Kn = mfp/r
-
-    !! Cunningham slip factor
-    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
 
     regime2 = (4.0_dp * kb * T * beta)/(3.0_dp * eta) * y(1)**2
 
@@ -323,38 +330,22 @@ module mini_haze_i_dlsode_mom_mod
 
   end subroutine calc_coag
 
-  subroutine calc_coal(n_eq, y, f_coal)
+  subroutine calc_coal(n_eq, y, f_coal, r, Kn, beta)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: r, Kn, beta
 
     real(dp), intent(inout) :: f_coal
 
-    real(dp) :: beta, Kn, r, m_c, d_vf, vf, StK, E
+    real(dp) :: d_vf, vf, Stk, E
     real(dp), parameter :: eps = 0.5_dp
-
-    if (y(1) <= 1.0e-20_dp) then
-      f_coal = 0.0_dp
-      return
-    end if
-
-    !! Mean mass of particle
-    m_c = y(2)/y(1)
-
-    !! Mass weighted mean radius of particle
-    r = ((3.0_dp*m_c)/(4.0_dp*pi*rho_h))**(1.0_dp/3.0_dp)
-
-    !! Knudsen number
-    Kn = mfp/r
-
-    !! Cunningham slip factor
-    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
 
     !! Settling velocity
     vf = (2.0_dp * beta * grav_cgs * r**2 * rho_h)/(9.0_dp * eta) & 
       & * (1.0_dp + & 
-      & ((0.45_dp*grav_cgs*r**3*rho*rho_h)/(54.0_dp*eta**2))**(2.0_dp/5.0_dp))**(-5.0_dp/4.0_dp)
+      & ((0.45_dp*grav_cgs*r**3*rho*rho_h)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
 
     !! Estimate differential velocity
     d_vf = eps * vf
@@ -365,7 +356,7 @@ module mini_haze_i_dlsode_mom_mod
       E = 1.0_dp
     else
       !! Calculate Stokes number
-      StK = (vf * d_vf)/(grav_cgs * r)
+      Stk = (vf * d_vf)/(grav_cgs * r)
       E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
     end if
 
