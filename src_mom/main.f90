@@ -1,7 +1,7 @@
 program mini_haze_main
   use, intrinsic :: iso_fortran_env ! Requires fortran 2008
   use mini_haze_i_dlsode_mom_mod, only : mini_haze_i_dlsode_mom,  &
-    & Prod_in, r_mon, rho_h, p_deep, tau_loss, tau_act, tau_decay, tau_form 
+    & Prod_in, r_mon, rho_d, p_deep, tau_loss, tau_act, tau_decay, tau_form 
   implicit none
 
 
@@ -19,7 +19,7 @@ program mini_haze_main
   double precision, allocatable, dimension(:) :: q, VMR
 
   !! Mock atmosphere conditions
-  temp = 700.0! Temperature [K]
+  temp = 950.0! Temperature [K]
   p = 2e-1 ! Pressure [pa]
   mu = 2.33 ! mean molecular weight [g mol-1]
   g = 10.0 ! Gravity [m s-2]
@@ -34,7 +34,7 @@ program mini_haze_main
   print*, 'nd: ', nd_atm, 'rho: ', rho
 
   !! Timestep (of GCM usually)
-  t_step = 100.0
+  t_step = 60.0
 
   !! Allocate tracers and fall velocities
   !! q here is the volume mixing ratio
@@ -64,12 +64,12 @@ program mini_haze_main
 
   !! Send some parameters to the integration module
   r_mon = 1e-7
-  rho_h = 1.0
+  rho_d = 1.0
   p_deep = 1e5
   tau_loss = 1e3
-  tau_act = 1.0
-  tau_decay = 10000.0
-  tau_form = 1.0
+  tau_act = 100.0
+  tau_decay = 1.0
+  tau_form = 100.0
 
   open(newunit=u,file='mom_test.txt',action='readwrite')
 
@@ -81,9 +81,13 @@ program mini_haze_main
 
     m_c = (q(2)*rho)/(q(1)*nd_atm)
 
-    r = ((3.0*m_c)/(4.0*pi*rho_h))**(1.0/3.0)
+    r = ((3.0*m_c)/(4.0*pi*rho_d))**(1.0/3.0)
+
+    ! Shut off production after 1 timestep
+    !Prod_in = 0.0
 
     print*, n*t_step/86400, n, q(:), r * 1e4, Prod_in, vf
+    !print*, n*t_step/86400, n, q(:), Prod_in, tau_decay/tau_act + tau_decay/tau_form !* Prod_in
 
     write(u,*) q(:)
 
