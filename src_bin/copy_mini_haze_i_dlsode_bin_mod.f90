@@ -56,6 +56,7 @@ module mini_haze_i_dlsode_mod
 
     !! To initialisations for first call
     if (first_call .eqv. .True.) then
+      n_bin = n_eq - 2
       call init_mini_haze_bin(n_eq)
       call calc_eps()
       first_call = .False.

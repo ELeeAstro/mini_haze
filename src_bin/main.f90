@@ -1,91 +1,94 @@
 program mini_haze_main
   use, intrinsic :: iso_fortran_env ! Requires fortran 2008
-  !use mini_haze_i_dlsode_mod, only : mini_haze_i_dlsode, m
-  use mini_haze_i_dlsode_mom_mod, only : mini_haze_i_dlsode_mom, rho_h, p_deep, tau_loss
-  use mini_haze_production_mod, only : mini_haze_prod
+  use mini_haze_i_dlsode_bin_mod, only : mini_haze_i_dlsode_bin,  &
+    & Prod_in, r_mon, rho_d, p_deep, tau_loss, tau_act, tau_decay, tau_form, &
+    r_min, r_max, m_min, m_max
   implicit none
 
-  ! Fortran 2008 intrinsic precisions - reccomonded if possible
-  !integer, parameter :: sp = REAL32
-  integer, parameter :: dp = REAL64
-  !integer, parameter :: qp = REAL128
 
-  real(dp), parameter :: pi = 4.0_dp * atan(1.0_dp)
-  real(dp), parameter :: kb = 1.380649e-16_dp
-  real(dp), parameter :: amu = 1.66054e-24_dp
+  double precision, parameter :: pi = 4.0 * atan(1.0)
+  double precision, parameter :: kb = 1.380649e-16
+  double precision, parameter :: amu = 1.66054e-24
 
 
-  integer :: n_bin, n_steps, n, u
-  real(dp) :: temp, p, mu, g, t_step, nd_atm, rho
-  real(dp) :: F0, mu_z, sig, m0, Prod
-
-  real(dp) :: bulk_den, a_seed, r
+  integer :: n_eq, n_bin, n_steps, n_gas, n, u
+  double precision :: temp, p, mu, g, t_step, nd_atm, rho
+  double precision :: F0, mu_z, sig, m0
   
-  real(dp), allocatable, dimension(:) :: q, vf, f_prod
+  double precision, allocatable, dimension(:) :: q, VMR, vf
 
   !! Mock atmosphere conditions
-  temp = 700.0_dp ! Temperature [K]
-  p = 2e-1_dp ! Pressure [pa]
-  mu = 2.33_dp ! mean molecular weight [g mol-1]
-  g = 10.0_dp ! Gravity [m s-2]
+  temp = 950.0! Temperature [K]
+  p = 2e-1 ! Pressure [pa]
+  mu = 2.33 ! mean molecular weight [g mol-1]
+  g = 10.0 ! Gravity [m s-2]
 
-  n_bin = 2 ! Number of size bins = 2 for moment method
-  n_steps = 1000 ! Number of time steps
+  n_bin = 40 ! Number of size bins = 2 for moment method
+  n_eq = n_bin + 2 ! Number of size bins + precursor tracers
+  n_steps = int(1e5) ! Number of time steps
  
-  rho = (p*10.0_dp*mu*amu)/(kb * temp) ! Mass density [g cm-3]
-  nd_atm = (p*10.0_dp)/(kb*temp) ! Number density [cm-3]
+  rho = (p*10.0*mu*amu)/(kb * temp) ! Mass density [g cm-3]
+  nd_atm = (p*10.0)/(kb*temp) ! Number density [cm-3]
 
   print*, 'nd: ', nd_atm, 'rho: ', rho
 
   !! Timestep (of GCM usually)
-  t_step = 100.0_dp
+  t_step = 60.0
 
   !! Allocate tracers and fall velocities
   !! q here is the volume mixing ratio
-  allocate(q(n_bin), vf(n_bin))
-  q(:) = 1.0e-30_dp
-  vf(:) = 0.0_dp
+  allocate(q(n_eq), vf(n_bin))
+  q(:) = 1.0e-30
+
+  !! Allocate the background gas VMR (e.g. H2, He, H)
+  n_gas = 3
+  allocate(VMR(n_gas))
+  VMR(1) = 0.85
+  VMR(2) = 0.15
+  VMR(3) = 1e-6
 
   !! Give initial values analytical solution
 
   !! Set up a mock production rate using Steinrueck et al. (2023)
-  mu_z = 1.0_dp
-  F0 = 1.0e-11_dp
-  sig = 0.25_dp*log(10.0_dp)
-  m0 = 2.0e-6_dp * 1e5_dp
+  mu_z = 1.0
+  F0 = 1.0e-11
+  sig = 0.25*log(10.0)
+  m0 = 2.0e-6 * 1e5
 
   !! Production rate is dimensionless and is a mass mixing ratio
-  Prod = F0 * g * mu_z * (1.0_dp/(sqrt(2.0_dp*pi) * p * sig)) &
-    & * exp(-(log(p/m0)**2)/(2.0_dp*sig**2))
+  Prod_in = F0 * g * mu_z * (1.0/(sqrt(2.0*pi) * p * sig)) &
+    & * exp(-(log(p/m0)**2)/(2.0*sig**2))
 
-  !! Haze parameters
-  bulk_den = 2.0_dp
-  a_seed = 1e-7_dp
-  
-  allocate(f_prod(n_bin))
-  !! Find the production rate for each moments/bin size 
-  f_prod(1) = (3.0_dp * Prod)/(4.0_dp*pi*a_seed**3*bulk_den) * rho
-  f_prod(2) = Prod * rho
-
-  print*, f_prod(:), a_seed * 1e4_dp
+  print*, Prod_in
 
   !! Send some parameters to the integration module
-  rho_h = 2.0_dp
-  p_deep = 1e5_dp
-  tau_loss = 1e3_dp
+  r_mon = 1e-7
+  rho_d = 1.0
+  p_deep = 1e5
+  tau_loss = 1e3
+  tau_act = 100.0
+  tau_decay = 1.0
+  tau_form = 100.0
 
-  open(newunit=u,file='test.txt',action='readwrite')
+  r_min =
+  r_max = 
+  m_min = 
+  m_max = 
+
+  !! Calculate the mass bins
+
+  open(newunit=u,file='bin_test.txt',action='readwrite')
 
   write(u,*) q(:)
 
   do n = 1, n_steps
 
-    call mini_haze_prod(n_bin, f_prod)
-    call mini_haze_i_dlsode_mom(n_bin, temp, p, mu, g, t_step, vf, q)
+    call mini_haze_i_dlsode_bin(n_eq, temp, p, mu, g, t_step, q, vf, n_gas, VMR)
 
-    r = ((3.0_dp*(q(2)*rho)/(q(1)*nd_atm))/(4.0_dp*pi*bulk_den))**(1.0_dp/3.0_dp)
+    ! Shut off production after 1 timestep
+    !Prod_in = 0.0
 
-    print*, n*t_step, n, q(:), r * 1e4_dp
+    print*, n*t_step/86400, n, q(:)
 
     write(u,*) q(:)
 

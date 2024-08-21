@@ -1,4 +1,4 @@
-module mini_haze_i_dlsode_mom_mod
+module mini_haze_i_dlsode_bin_mod
   use, intrinsic :: iso_fortran_env ! Requires fortran 2008
   implicit none
 
@@ -15,7 +15,8 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), parameter :: third = 1.0_dp/3.0_dp
 
   !! Global variables
-  real(dp) :: T, mu, nd_atm, rho, p, grav
+  real(dp) :: T, mu, nd_atm, rho, p, grav, mfp, eta
+  logical :: first_call = .True.
 
   !! Variables needed to be sent in from outside
   real(dp) :: Prod_in ! Mass mixing ratio production rate of precurser molecules
@@ -28,7 +29,14 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: V_mon ! Haze particle monomer volume
   real(dp) :: m_mon ! Haze particle monomer mass
 
-  real(dp) :: mfp, eta
+  !! Bin calculation variables
+  integer :: n_bin
+  real(dp) :: r_min, r_max, m_min, m_max ! Max and min bin radius and mas
+  real(dp), allocatable, dimension(:) :: re, r, me, m ! radius and mass bin edges and center
+  real(dp), allocatable, dimension(:,:) :: Kr
+
+
+
 
   !! Diameter, LJ potential and molecular weight for background gases
   real(dp), parameter :: d_OH = 3.06e-8_dp, LJ_OH = 100.0_dp * kb, molg_OH = 17.00734_dp  ! estimate
@@ -50,11 +58,12 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), dimension(3) :: LJ_g = (/LJ_H2, LJ_He, LJ_H/)
   real(dp), dimension(3) :: molg_g = (/molg_H2, molg_He, molg_H/)
 
-  public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
+  public :: mini_haze_i_dlsode_bin, RHS_bin, RHS_analy, jac_dum
+  private :: find_production_rate
 
   contains
 
-  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, vf, n_gas, VMR_g)
+  subroutine mini_haze_i_dlsode_bin(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, vf, n_gas, VMR_g)
     implicit none
 
     ! Input variables
@@ -64,7 +73,7 @@ module mini_haze_i_dlsode_mom_mod
 
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
-    real(dp), intent(out) :: vf
+    real(dp), dimension(n_eq-2), intent(out) :: vf
 
     integer :: ncall, n
 
@@ -79,8 +88,17 @@ module mini_haze_i_dlsode_mom_mod
     integer :: rworkdim, iworkdim
 
     !! Work variables
+    integer :: n_bin
     real(dp) :: eta_g, bot, top
-    real(dp) :: m_h, rV, Kn, beta
+    real(dp), allocatable, dimension(:) ::  Kn, beta
+
+    !! To initialisations for first call
+    if (first_call .eqv. .True.) then
+      n_bin = n_eq - 2
+      call init_mini_haze_bin(n_eq)
+      call calc_eps()
+      first_call = .False.
+    end if
 
     !! Alter input values to mini-haze units
     !! (note, some are obvious not not changed in case specific models need different conversion factors)
@@ -123,6 +141,25 @@ module mini_haze_i_dlsode_mom_mod
     !! Haze particle momomer mass
     m_mon = rho_d * V_Mon
 
+    !! Since we know the bin centers, we can pre-calculate some values for each bin
+    !! Knudsen number
+    allocate(Kn(n_bin))
+    Kn(:) = mfp/r(:)
+
+    !! Cunningham slip factor
+    allocate(beta(n_bin))
+    beta(:) = 1.0_dp + Kn(:)*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn(:)))
+
+    !! Settling velocity
+    vf(:) = (2.0_dp * beta * grav * r(:)**2 * rho_d)/(9.0_dp * eta) & 
+      & * (1.0_dp + & 
+      & ((0.45_dp*grav*r(:)**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+
+
+    !! Due to the equation set, we can pre-calculate the collison Kernel before integration
+    !! Analytical collisional kernel
+    allocate(Kr(n_bin,n_bin))
+    Kr(:,:) = 1.0_dp
 
     ! -----------------------------------------
     ! ***  parameters for the DLSODE solver  ***
@@ -171,7 +208,7 @@ module mini_haze_i_dlsode_mom_mod
 
     do while ((t_now < t_end) .and. (ncall < 100))
 
-      call DLSODE (RHS_mom, n_eq, y, t_now, t_end, itol, rtol, atol, itask, &
+      call DLSODE (RHS_analy, n_eq, y, t_now, t_end, itol, rtol, atol, itask, &
         & istate, iopt, rwork, rworkdim, iwork, iworkdim, jac_dum, mf)
 
       ncall = ncall + 1
@@ -187,41 +224,14 @@ module mini_haze_i_dlsode_mom_mod
 
     end do
 
-
-    !! Limit y values
-    y(:) = max(y(:),1e-30_dp)
-
-    !print*, t_now, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp) * 1e4_dp
-
-    !! Calculate vf from final results of interation
-    !! Mean mass of particle
-    m_h = max((y(2)*rho)/(y(1)*nd_atm), m_mon)
-
-    !! Mass weighted mean radius of particle
-    rV = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
-
-    !! Knudsen number
-    Kn = mfp/rV
-
-    !! Cunningham slip factor
-    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
-
-    !! Settling velocity
-    vf = (2.0_dp * beta * grav * rV**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp + & 
-      & ((0.45_dp*grav*rV**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
-
-    !! Convert vf to mks
-    vf = vf / 100.0_dp 
-
     !! Give y values to tracers
-    q(:) = y(:)
+    q(:) = max(y(:), 1e-30_dp)
 
-    deallocate(y, rtol, atol, rwork, iwork)
+    deallocate(y, Kn, Kr, beta, rtol, atol, rwork, iwork)
 
-    end subroutine mini_haze_i_dlsode_mom
+    end subroutine mini_haze_i_dlsode_bin
 
-  subroutine RHS_mom(n_eq, time, y, f)
+  subroutine RHS_bin(n_eq, time, y, f)
     implicit none
 
     integer, intent(in) :: n_eq
@@ -231,152 +241,135 @@ module mini_haze_i_dlsode_mom_mod
 
     real(dp) :: f_coal, f_coag
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
-    real(dp), dimension(2) :: f_loss
-    real(dp), dimension(n_eq) ::  f_prod
-    real(dp) :: m_h, rV, Kn, beta
+    real(dp), dimension(n_eq-2) :: f_loss
+    real(dp), dimension(2) ::  f_prod
 
-    !! In this routine, you calculate the new fluxes (f) for each moment
+    !! In this routine, you calculate the new fluxes (f) for each bin
     !! The values of each bin (y) are typically kept constant
     !! Basically, you solve for the RHS of the ODE for each moment
 
-
-    !! Convert y to real numbers to calculate f
-    y(1) = y(1)*nd_atm ! Convert to real number density
-    y(2) = y(2)*rho   ! Convert to real mass density
-
-    !! Find the RHS of the ODE for each particle bin size
-    !f(:) = 0.0_dp
-
-
-      !! Calculate coagulation and coalesence fluxes
-
-      !! Mean mass of particle
-      m_h = max(y(2)/y(1), m_mon)
-
-      !! Mass weighted mean radius of particle
-      rV = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
-
-      !! Knudsen number
-      Kn = mfp/rV
-
-      !! Cunningham slip factor
-      beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
-
-      !! Calculate the coagulation loss rate for the zeroth moment
-      call calc_coag(n_eq, y, f_coag, m_h, rV, beta)
-
-      !! Calculate the coalesence loss rate for the zeroth moment
-      call calc_coal(n_eq, y, f_coal, rV, Kn, beta)
-
-
     !! Add thermal decomposition loss term if above given pressure level (pa)
     if (p > p_deep) then
-      f_loss(1) = y(1)/tau_loss
-      f_loss(2) = y(2)/tau_loss
+      f_loss(:) = y(1:n_bin)/tau_loss
     else
-      f_loss(1) = 0.0_dp
-      f_loss(2) = 0.0_dp
+      f_loss(:) = 0.0_dp
     end if
 
     !! Calculate precursor and activated molecules rates
-    f_act = y(3)/tau_act
-    f_decay_pre = y(3)/tau_decay
-    f_decay_act = y(4)/tau_decay
-    f_form = y(4)/tau_form
+    f_act = y(n_eq-1)/tau_act
+    f_decay_pre = y(n_eq-1)/tau_decay
+    f_decay_act = y(n_eq)/tau_decay
+    f_form = y(n_eq)/tau_form
 
     !! Add a production rate source term for each moment and precursor activation
-    call find_production_rate(n_eq, f_prod, f_form)
+    call find_production_rate(f_prod, f_form)
 
-    !! Calculate final net flux rate for each tracer
-    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1)
-    f(2) = f_prod(2) - f_loss(2)
-    f(3) = f_prod(3) - f_act - f_decay_pre
-    f(4) = f_prod(4) + f_act - f_form - f_decay_act
+    !! Calculate final net flux rate for each bin
+    !! First bin contains flux of monomers from production rate
+    f(1) = f_prod(1)
 
-    !! Convert f to ratios
-    f(1) = f(1)/nd_atm
-    f(2) = f(2)/rho
-      
-    !! Convert y back to ratios
-    y(1) = y(1)/nd_atm
-    y(2) = y(2)/rho 
+    !! Rest contain net flux in-out of bin
+
+
+    !! Calculate final net flux rate for precusor molecules and activation
+    f(n_eq-1) = f_prod(2) - f_act - f_decay_pre
+    f(n_eq) = f_act - f_form - f_decay_act
+
 
     !print*, 'y', time, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp) * 1e4_dp
     !print*, 'f', f(:), f_prod(:)
     !print*, 'f2', f_coal, f_coag, f_loss, f_act, f_decay_pre, f_decay_act, f_form
 
-  end subroutine RHS_mom
+  end subroutine RHS_bin
 
-  !! Routine called by the mini-haze integrator - calculates production rates from mass mixing ratio rate
-  subroutine find_production_rate(n_eq, f_prod, f_form)
+  !! Analytical testing RHS scheme
+  subroutine RHS_analy(n_eq, time, y, f)
     implicit none
 
     integer, intent(in) :: n_eq
+    real(dp), intent(inout) :: time
+    real(dp), dimension(n_eq), intent(inout) :: y
+    real(dp), dimension(n_eq), intent(inout) :: f
+
+
+
+
+  end subroutine RHS_analy
+
+  !! Routine called by the mini-haze integrator - calculates production rates from mass mixing ratio rate
+  subroutine find_production_rate(f_prod, f_form)
+    implicit none
 
     real(dp), intent(in) :: f_form
 
-    real(dp), dimension(n_eq), intent(out) :: f_prod
+    real(dp), dimension(2), intent(out) :: f_prod
 
-    f_prod(1) = f_form * (rho/(V_mon*rho_d))
-    f_prod(2) = f_form * rho
-    f_prod(3) = Prod_in
-    f_prod(4) = 0.0_dp
+    f_prod(1) = 0.0_dp
+    f_prod(2) = Prod_in
 
   end subroutine find_production_rate
 
-  subroutine calc_coag(n_eq, y, f_coag, m_h, rV, beta)
+  subroutine init_mini_haze_bin(n_eq)
     implicit none
 
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: m_h, rV, beta
+     integer, intent(in) :: n_eq
 
-    real(dp), intent(inout) :: f_coag
+    integer :: u_nml, i
+    real(dp) :: lrmin, lrmax, rmin, rmax
+    real(dp) :: lmmin, lmmax, mmin, mmax
 
-    real(dp) :: regime1, regime2
+    ! Read the namelist to get the mini-haze parameters
 
-    regime1 = 8.0_dp * sqrt((pi*kb*T)/m_h) * rV**2 * y(1)**2
+    !! Allocate other arrays
+    allocate(re(n_bin+1), r(n_bin), me(n_bin+1), m(n_bin))
 
-    regime2 = (4.0_dp * kb * T * beta)/(3.0_dp * eta) * y(1)**2
+    !! For testing do other way round
+    lmmin = log10(mmin)
+    lmmax = log10(mmax)
+    do i = 1, n_bin+1
+      me(i) = 10.0_dp**((lmmax-lmmin) * real(i-1,dp) / real(n_bin+1-1,dp) + lmmin)
+    end do
 
-    f_coag = min(regime1, regime2)
+    !! Bin centers are the central value of each bin edge
+    m(:) = (me(1:n_bin) + me(2:n_bin+1))/2.0_dp
 
-  end subroutine calc_coag
+    !! Calculate radii of bin edges and center
+    re(:) = ((3.0*me(:))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp)
+    r(:) = ((3.0*m(:))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp) 
 
-  subroutine calc_coal(n_eq, y, f_coal, rV, Kn, beta)
-    implicit none
+    print*,re(:)*1e4_dp
+    print*,r(:)*1e4_dp
 
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: rV, Kn, beta
+    print*, me(:)
+    print*, m(:)
 
-    real(dp), intent(inout) :: f_coal
+    return
 
-    real(dp) :: d_vf, vf, Stk, E
-    real(dp), parameter :: eps = 0.5_dp
+    !! Calculate log spaced values between rmin and rmax
+    !! for the bin edges - convert to cm here
+    rmin = rmin * 1e-4_dp
+    rmax = rmax * 1e-4_dp
+    lrmin = log10(rmin)
+    lrmax = log10(rmax)
+    do i = 1, n_bin+1
+      re(i) = 10.0_dp**((lrmax-lrmin) * real(i-1,dp) / real(n_bin+1-1,dp) + lrmin)
+    end do
 
-    !! Settling velocity
-    vf = (2.0_dp * beta * grav * rV**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp + & 
-      & ((0.45_dp*grav*rV**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+    !! Bin centers are the central value of each bin edge
+    r(:) = (re(1:n_bin) + re(2:n_bin+1))/2.0_dp
 
-    !! Estimate differential velocity
-    d_vf = eps * vf
+    !! Calculate masses of bin edges and center
+    me(:) = 4.0_dp/3.0_dp * pi * re(:)**3 * rho_h
+    m(:) = 4.0_dp/3.0_dp * pi * r(:)**3 * rho_h
 
-    !! Calculate E
-    if (Kn >= 1.0_dp) then
-      !! E = 1 when Kn > 1
-      E = 1.0_dp
-    else
-      !! Calculate Stokes number
-      Stk = (vf * d_vf)/(grav * rV)
-      E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
-    end if
+    print*, rmin*1e4_dp, rmax*1e4_dp
+    print*,re(:)*1e4_dp
+    print*,r(:)*1e4_dp
 
-    !! Finally calculate the loss flux term
-    f_coal = 2.0_dp*pi*rV**2*y(1)**2*d_vf*E
+    print*, me(:)
+    print*, m(:)
 
-  end subroutine calc_coal
+  end subroutine init_mini_haze_bin
 
   subroutine jac_dum (NEQ, X, Y, ML, MU, PD, NROWPD)
     integer, intent(in) :: NEQ, ML, MU, NROWPD
@@ -385,4 +378,4 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), dimension(NROWPD, NEQ), intent(inout) :: PD
   end subroutine jac_dum
 
-end module mini_haze_i_dlsode_mom_mod
+end module mini_haze_i_dlsode_bin_mod
