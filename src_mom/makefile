@@ -36,8 +36,10 @@ LFLAGS    = $(FFLAGS)
 
 OBJECTS = \
 dlsode.o \
+lxmie_mod.o \
 mini_haze_i_dlsode_mom_mod.o \
-mini_haze_opacity_mod.o \
+mini_haze_vf_mod.o \
+mini_haze_opac_mie_mod.o \
 main.o 
 
 # executable statement

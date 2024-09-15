@@ -46,25 +46,24 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
 
   !! Constuct required arrays for calculating gas mixtures
-  real(dp), dimension(3) :: d_g = (/d_H2, d_He, d_H/)
-  real(dp), dimension(3) :: LJ_g = (/LJ_H2, LJ_He, LJ_H/)
-  real(dp), dimension(3) :: molg_g = (/molg_H2, molg_He, molg_H/)
+  real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
+  private :: calc_coal, calc_coag, find_production_rate, eta_construct
 
   contains
 
-  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, t_end, q, vf, n_gas, VMR_g)
+  subroutine mini_haze_i_dlsode_mom(n_eq, T_in, P_in, mu_in, grav_in, bg_VMR_in, t_end, sp_bg, q)
     implicit none
 
     ! Input variables
-    integer, intent(in) :: n_eq, n_gas
+    integer, intent(in) :: n_eq
+    character(len=20), dimension(:), intent(in) :: sp_bg
     real(dp), intent(in) :: T_in, P_in, mu_in, grav_in, t_end
-    real(dp), dimension(n_gas), intent(in) :: VMR_g
+    real(dp), dimension(:), intent(in) :: bg_VMR_in
 
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
-    real(dp), intent(out) :: vf
 
     integer :: ncall, n
 
@@ -73,14 +72,16 @@ module mini_haze_i_dlsode_mom_mod
 
     ! DLSODE variables
     real(dp), allocatable, dimension(:) :: y
-    real(dp), allocatable, dimension(:) :: rwork, rtol, atol
+    real(dp), allocatable, dimension(:) :: rwork
     integer, allocatable, dimension(:) :: iwork
     integer :: itol, itask, istate, iopt, mf
     integer :: rworkdim, iworkdim
+    real(dp) :: rtol, atol
 
     !! Work variables
+    integer :: n_gas
     real(dp) :: eta_g, bot, top
-    real(dp) :: m_h, rV, Kn, beta
+    real(dp), allocatable, dimension(:) :: VMR_g
 
     !! Alter input values to mini-haze units
     !! (note, some are obvious not not changed in case specific models need different conversion factors)
@@ -88,6 +89,11 @@ module mini_haze_i_dlsode_mom_mod
     !! Find the number density of the atmosphere
     T = T_in             ! Convert temperature to K
     p = P_in * 10.0_dp   ! Convert pascal to dyne cm-2
+
+    !! Background gas array
+    n_gas = size(bg_VMR_in)
+    allocate(VMR_g(n_gas))
+    VMR_g(:) = bg_VMR_in(:)
 
     !! Change mu_in to mu
     mu = mu_in ! Convert mean molecular weight to mu [g mol-1]
@@ -102,6 +108,7 @@ module mini_haze_i_dlsode_mom_mod
     rho = (p*mu*amu)/(kb * T) ! Mass density [g cm-3]
 
     !! Calculate dynamical viscosity for this layer - do square root mixing law from Rosner 2012
+    call eta_construct(sp_bg)
     top = 0.0_dp
     bot = 0.0_dp
     do n = 1, n_gas
@@ -138,11 +145,11 @@ module mini_haze_i_dlsode_mom_mod
     mf = 22
     rworkdim = 22 + 9*n_eq + n_eq**2
     iworkdim = 20 + n_eq
-    allocate(rtol(n_eq), atol(n_eq), rwork(rworkdim), iwork(iworkdim))
+    allocate(rwork(rworkdim), iwork(iworkdim))
 
-    itol = 4
-    rtol(:) = 1.0e-3_dp           ! Relative tolerances for each scalar
-    atol(:) = 1.0e-30_dp               ! Absolute tolerance for each scalar (floor value)
+    itol = 1
+    rtol = 1.0e-3_dp           ! Relative tolerances for each scalar
+    atol = 1.0e-30_dp               ! Absolute tolerance for each scalar (floor value)
 
     rwork(:) = 0.0_dp
     iwork(:) = 0
@@ -187,39 +194,12 @@ module mini_haze_i_dlsode_mom_mod
 
     end do
 
-
-    !! Limit y values
-    y(:) = max(y(:),1e-30_dp)
-
-    !print*, t_now, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp) * 1e4_dp
-
-    !! Calculate vf from final results of interation
-    !! Mean mass of particle
-    m_h = max((y(2)*rho)/(y(1)*nd_atm), m_mon)
-
-    !! Mass weighted mean radius of particle
-    rV = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
-
-    !! Knudsen number
-    Kn = mfp/rV
-
-    !! Cunningham slip factor
-    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
-
-    !! Settling velocity
-    vf = (2.0_dp * beta * grav * rV**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp + & 
-      & ((0.45_dp*grav*rV**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
-
-    !! Convert vf to mks
-    vf = vf / 100.0_dp 
-
     !! Give y values to tracers
-    q(:) = y(:)
+    q(:) = max(y(:),1e-30_dp)
 
-    deallocate(y, rtol, atol, rwork, iwork)
+    deallocate(y, rwork, iwork, d_g, LJ_g, molg_g)
 
-    end subroutine mini_haze_i_dlsode_mom
+  end subroutine mini_haze_i_dlsode_mom
 
   subroutine RHS_mom(n_eq, time, y, f)
     implicit none
@@ -233,40 +213,37 @@ module mini_haze_i_dlsode_mom_mod
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
-    real(dp) :: m_h, rV, Kn, beta
+    real(dp) :: m_h, r_h, Kn, beta
 
     !! In this routine, you calculate the new fluxes (f) for each moment
-    !! The values of each bin (y) are typically kept constant
+    !! The values of each moment (y) are typically kept constant
     !! Basically, you solve for the RHS of the ODE for each moment
-
 
     !! Convert y to real numbers to calculate f
     y(1) = y(1)*nd_atm ! Convert to real number density
     y(2) = y(2)*rho   ! Convert to real mass density
 
-    !! Find the RHS of the ODE for each particle bin size
-    !f(:) = 0.0_dp
+    !! Find the RHS of the ODE for each moment
 
+    !! Calculate coagulation and coalesence fluxes
 
-      !! Calculate coagulation and coalesence fluxes
+    !! Mean mass of particle
+    m_h = max(y(2)/y(1), m_mon)
 
-      !! Mean mass of particle
-      m_h = max(y(2)/y(1), m_mon)
+    !! Mass weighted mean radius of particle
+    r_h = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
 
-      !! Mass weighted mean radius of particle
-      rV = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
+    !! Knudsen number
+    Kn = mfp/r_h
 
-      !! Knudsen number
-      Kn = mfp/rV
+    !! Cunningham slip factor
+    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
 
-      !! Cunningham slip factor
-      beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
+    !! Calculate the coagulation loss rate for the zeroth moment
+    call calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
 
-      !! Calculate the coagulation loss rate for the zeroth moment
-      call calc_coag(n_eq, y, f_coag, m_h, rV, beta)
-
-      !! Calculate the coalesence loss rate for the zeroth moment
-      call calc_coal(n_eq, y, f_coal, rV, Kn, beta)
+    !! Calculate the coalesence loss rate for the zeroth moment
+    call calc_coal(n_eq, y, r_h, Kn, beta, f_coal)
 
 
     !! Add thermal decomposition loss term if above given pressure level (pa)
@@ -307,7 +284,7 @@ module mini_haze_i_dlsode_mom_mod
 
   end subroutine RHS_mom
 
-  !! Routine called by the mini-haze integrator - calculates production rates from mass mixing ratio rate
+  !! Monomer production rates from mass mixing ratio rate passed into module
   subroutine find_production_rate(n_eq, f_prod, f_form)
     implicit none
 
@@ -324,41 +301,56 @@ module mini_haze_i_dlsode_mom_mod
 
   end subroutine find_production_rate
 
-  subroutine calc_coag(n_eq, y, f_coag, m_h, rV, beta)
+  !! Particle-particle Brownian coagulation
+  subroutine calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: m_h, rV, beta
+    real(dp), intent(in) :: m_h, r_h, beta
 
     real(dp), intent(inout) :: f_coag
 
-    real(dp) :: regime1, regime2
+    real(dp) :: phi, del_r, D_r, V_r, lam_r
 
-    regime1 = 8.0_dp * sqrt((pi*kb*T)/m_h) * rV**2 * y(1)**2
+    !! Particle diffusion rate
+    D_r = (kb*T*beta)/(6.0_dp*pi*eta*r_h)
 
-    regime2 = (4.0_dp * kb * T * beta)/(3.0_dp * eta) * y(1)**2
+    !! Thermal velocity limit rate
+    V_r = sqrt((8.0_dp*kb*T)/(pi*m_h))
 
-    f_coag = min(regime1, regime2)
+    !! Ratio fraction
+    lam_r = (8.0_dp*D_r)/(pi*V_r)
+
+    !! Interpolation function
+    del_r = ((2.0_dp*r_h + lam_r)**3 - (4.0_dp*r_h**2 + lam_r**2)**(1.5_dp))/(6.0_dp*r_h*lam_r) &
+      & - 2.0_dp*r_h
+
+    !! Correction factor
+    phi = 2.0_dp*r_h/(2.0_dp*r_h + sqrt(2.0_dp)*del_r) + (4.0_dp*D_r)/(r_h*sqrt(2.0_dp)*V_r) 
+
+    !! Coagulation flux (Zeroth moment) [cm-3 s-1]
+    f_coag = (4.0_dp * kb * T * beta)/(3.0_dp * eta * phi) * y(1)**2
 
   end subroutine calc_coag
 
-  subroutine calc_coal(n_eq, y, f_coal, rV, Kn, beta)
+  !! Particle-particle gravitational coalesence
+  subroutine calc_coal(n_eq, y, r_h, Kn, beta, f_coal)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: rV, Kn, beta
+    real(dp), intent(in) :: r_h, Kn, beta
 
-    real(dp), intent(inout) :: f_coal
+    real(dp), intent(out) :: f_coal
 
     real(dp) :: d_vf, vf, Stk, E
     real(dp), parameter :: eps = 0.5_dp
 
     !! Settling velocity
-    vf = (2.0_dp * beta * grav * rV**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp + & 
-      & ((0.45_dp*grav*rV**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+    vf = (2.0_dp * beta * grav * r_h**2 * rho_d)/(9.0_dp * eta) & 
+      & * (1.0_dp &
+      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
 
     !! Estimate differential velocity
     d_vf = eps * vf
@@ -369,20 +361,97 @@ module mini_haze_i_dlsode_mom_mod
       E = 1.0_dp
     else
       !! Calculate Stokes number
-      Stk = (vf * d_vf)/(grav * rV)
+      Stk = (vf * d_vf)/(grav * r_h)
       E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
     end if
 
     !! Finally calculate the loss flux term
-    f_coal = 2.0_dp*pi*rV**2*y(1)**2*d_vf*E
+    f_coal = 2.0_dp*pi*r_h**2*y(1)**2*d_vf*E
 
   end subroutine calc_coal
 
+  !! Dummy jacobian subroutine required for dlsode
   subroutine jac_dum (NEQ, X, Y, ML, MU, PD, NROWPD)
     integer, intent(in) :: NEQ, ML, MU, NROWPD
     real(dp), intent(in) :: X
     real(dp), dimension(NEQ), intent(in) :: Y
     real(dp), dimension(NROWPD, NEQ), intent(inout) :: PD
   end subroutine jac_dum
+
+  !! eta for background gas
+  subroutine eta_construct(sp_bg)
+    implicit none
+
+    character(len=20), dimension(:), intent(in) :: sp_bg
+    
+    integer :: n_bg, i
+
+    n_bg = size(sp_bg)
+
+    allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg))
+
+    do i = 1, n_bg
+      select case(sp_bg(i))
+
+      case('OH')
+        d_g(i) = d_OH
+        LJ_g(i) = LJ_OH
+        molg_g(i) = molg_OH
+      case('H2')
+        d_g(i) = d_H2
+        LJ_g(i) = LJ_H2
+        molg_g(i) = molg_H2
+      case('H2O')
+        d_g(i) = d_H2O
+        LJ_g(i) = LJ_H2O
+        molg_g(i) = molg_H2O
+      case('H')
+        d_g(i) = d_H
+        LJ_g(i) = LJ_H
+        molg_g(i) = molg_H
+      case('CO')
+        d_g(i) = d_CO
+        LJ_g(i) = LJ_CO
+        molg_g(i) = molg_CO
+      case('CO2')
+        d_g(i) = d_CO2
+        LJ_g(i) = LJ_CO2
+        molg_g(i) = molg_CO2
+      case('O')
+        d_g(i) = d_O
+        LJ_g(i) = LJ_O
+        molg_g(i) = molg_O
+      case('CH4')
+        d_g(i) = d_CH4
+        LJ_g(i) = LJ_CH4
+        molg_g(i) = molg_CH4
+      case('C2H2')
+        d_g(i) = d_C2H2
+        LJ_g(i) = LJ_C2H2
+        molg_g(i) = molg_C2H2
+      case('NH3')
+        d_g(i) = d_NH3
+        LJ_g(i) = LJ_NH3
+        molg_g(i) = molg_NH3
+      case('N2')
+        d_g(i) = d_N2
+        LJ_g(i) = LJ_N2
+        molg_g(i) = molg_N2 
+      case('HCN')
+        d_g(i) = d_HCN
+        LJ_g(i) = LJ_HCN
+        molg_g(i) = molg_HCN
+      case('He')
+        d_g(i) = d_He
+        LJ_g(i) = LJ_He
+        molg_g(i) = molg_He
+      case default
+        print*, 'Background gas species data not found: ', trim(sp_bg(i)), 'STOP'
+        stop
+      end select
+
+    end do
+    
+  end subroutine eta_construct
 
 end module mini_haze_i_dlsode_mom_mod
