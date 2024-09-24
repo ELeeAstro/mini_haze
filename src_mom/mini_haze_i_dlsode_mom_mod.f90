@@ -28,7 +28,10 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: V_mon ! Haze particle monomer volume
   real(dp) :: m_mon ! Haze particle monomer mass
 
-  real(dp) :: mfp, eta
+  real(dp) :: mfp, eta, nu, eps_d
+
+  !! Kolmogorov scale
+  real(dp), parameter :: l_k = 1.0_dp
 
   !! Diameter, LJ potential and molecular weight for background gases
   real(dp), parameter :: d_OH = 3.06e-8_dp, LJ_OH = 100.0_dp * kb, molg_OH = 17.00734_dp  ! estimate
@@ -49,7 +52,8 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
-  private :: calc_coal, calc_coag, find_production_rate, eta_construct
+  private :: calc_coal, calc_coag, calc_turb_acc, calc_turb_shear, calc_turb_gravity, calc_turb_couple, &
+    & find_production_rate, eta_construct
 
   contains
 
@@ -120,6 +124,12 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Mixture dynamical viscosity
     eta = top/bot
+
+    !! Mixture kinematic viscosity
+    nu = eta/rho
+
+    !! dissipation of turbulent kinetic energy
+    eps_d = nu**3/l_k**4
 
     !! Calculate mean free path for this layer
     mfp = (2.0_dp*eta/rho) * sqrt((pi * mu)/(8.0_dp*R_gas*T))
@@ -209,7 +219,8 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), dimension(n_eq), intent(inout) :: y
     real(dp), dimension(n_eq), intent(inout) :: f
 
-    real(dp) :: f_coal, f_coag
+    real(dp) :: w_sh2, w_acc2, w_grav2, w_co2
+    real(dp) :: f_coal, f_coag, f_turb
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
@@ -241,10 +252,29 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Calculate the coagulation loss rate for the zeroth moment
     call calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
+    f_coag = max(1e-30_dp,f_coag)
 
     !! Calculate the coalesence loss rate for the zeroth moment
     call calc_coal(n_eq, y, r_h, Kn, beta, f_coal)
+    f_coal = max(1e-30_dp,f_coal)
 
+    !! Start turbulent collision rate calculation
+
+    !! Calculate the turbulent shear collision velocity
+    call calc_turb_shear(n_eq, y, r_h, w_sh2)
+
+    !! Calculate the turbulent acceleration collision velocity
+    call calc_turb_acc(n_eq, y, r_h, beta, w_acc2)
+
+    !! Calculate the turbulent gravity collision velocity
+    call calc_turb_gravity(n_eq, y, r_h, beta, w_grav2)
+
+    !! Calculate the turbulent fluid coupling collision velocity
+    call calc_turb_couple(n_eq, y, r_h, beta, w_co2)
+
+    !! Combine turbulent velocities into collision rate using total kernel
+    f_turb = 4.0_dp * pi * r_h**2 * sqrt(2.0_dp/pi) * sqrt(w_sh2 + w_acc2 + w_grav2 + w_co2) * y(1)**2
+    f_turb = max(1e-30_dp,f_turb)
 
     !! Add thermal decomposition loss term if above given pressure level (pa)
     if (p > p_deep) then
@@ -254,6 +284,7 @@ module mini_haze_i_dlsode_mom_mod
       f_loss(1) = 0.0_dp
       f_loss(2) = 0.0_dp
     end if
+    f_loss = max(1e-30_dp,f_loss)
 
     !! Calculate precursor and activated molecules rates
     f_act = y(3)/tau_act
@@ -265,7 +296,7 @@ module mini_haze_i_dlsode_mom_mod
     call find_production_rate(n_eq, f_prod, f_form)
 
     !! Calculate final net flux rate for each tracer
-    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1)
+    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1) - f_turb
     f(2) = f_prod(2) - f_loss(2)
     f(3) = f_prod(3) - f_act - f_decay_pre
     f(4) = f_prod(4) + f_act - f_form - f_decay_act
@@ -283,6 +314,85 @@ module mini_haze_i_dlsode_mom_mod
     !print*, 'f2', f_coal, f_coag, f_loss, f_act, f_decay_pre, f_decay_act, f_form
 
   end subroutine RHS_mom
+
+  !! Particle-particle turbulent shear collisions
+  subroutine calc_turb_shear(n_eq, y, r_h, w_sh2)
+    implicit none
+
+    integer, intent(in) :: n_eq
+    real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: r_h
+
+    real(dp), intent(out) :: w_sh2
+
+    w_sh2 = 4.0_dp/15.0_dp * r_h**2 * eps_d/nu
+
+  end subroutine calc_turb_shear
+
+  !! Particle-particle turbulent acceleration collisions
+  subroutine calc_turb_acc(n_eq, y, r_h, beta, w_acc2)
+    implicit none
+
+    integer, intent(in) :: n_eq
+    real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: r_h, beta
+
+    real(dp), intent(out) :: w_acc2
+
+    real(dp), parameter :: gam = 10.0_dp
+    real(dp) :: vf2, tau_i, b, T_l, th_i, c1, c2
+
+    vf2 = (gam * sqrt(eps_d*nu))/0.183_dp
+    tau_i = (2.0_dp * beta * rho_d * r_h**2)/(9.0_dp*eta)
+    b = (3.0_dp*rho)/(2.0_dp*rho_d + rho)
+    T_L = (0.4_dp*vf2)/eps_d
+
+    th_i = tau_i/T_L
+
+    c1 = sqrt((1.0_dp + th_i + th_i)/((1.0_dp + th_i)*(1.0_dp + th_i)))
+    c2 = (1.0_dp/(((1.0_dp + th_i)*(1.0_dp + th_i))) - 1.0_dp/(((1.0_dp + gam*th_i)*(1.0_dp + gam*th_i))))
+    w_acc2 = 3.0_dp*(1.0_dp-b)**2*vf2*(gam/(gam-1.0_dp)) & 
+      & * (((th_i + th_i)**2 - 4.0_dp*th_i*th_i*c1)/(th_i + th_i)) * c2
+
+  end subroutine calc_turb_acc
+
+  !! Particle-particle turbulent gravity collisions
+  subroutine calc_turb_gravity(n_eq, y, r_h, beta, w_grav2)
+    implicit none
+
+    integer, intent(in) :: n_eq
+    real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: r_h, beta
+
+    real(dp), intent(out) :: w_grav2
+
+    real(dp), parameter :: eps = 0.5_dp
+    real(dp) :: tau, dtau
+
+    tau = (2.0_dp*beta * rho_d*r_h**2)/(9.0_dp*eta)
+    dtau = eps * tau
+    w_grav2 = pi/8.0_dp * (1.0_dp - rho/rho_d)**2 * (eps*dtau)**2 * grav**2
+
+  end subroutine calc_turb_gravity
+
+  !! Particle-particle turbulent fluid coupling collisions
+  subroutine calc_turb_couple(n_eq, y, r_h, beta, w_co2)
+    implicit none
+
+    integer, intent(in) :: n_eq
+    real(dp), dimension(n_eq), intent(in) :: y 
+    real(dp), intent(in) :: r_h, beta
+
+    real(dp), intent(out) :: w_co2
+
+    real(dp), parameter :: lam_d = 10.0_dp
+    real(dp) :: dudt2, tau
+
+    tau = (2.0_dp*beta * rho_d*r_h**2)/(9.0_dp*eta)
+    dudt2 = 1.16_dp * eps_d**(1.5_dp)/sqrt(nu)
+    w_co2 = 2.0_dp*(1.0_dp - rho/rho_d)**2 * tau**2 * dudt2 * ((2.0_dp*r_h)**2/lam_d**2)
+
+  end subroutine calc_turb_couple
 
   !! Monomer production rates from mass mixing ratio rate passed into module
   subroutine find_production_rate(n_eq, f_prod, f_form)
