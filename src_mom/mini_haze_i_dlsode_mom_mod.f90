@@ -52,7 +52,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
-  private :: calc_coal, calc_coag, calc_turb_acc, calc_turb_shear, calc_turb_gravity, calc_turb_couple, &
+  private :: calc_coal, calc_coag, calc_turb_acc, calc_turb_shear, calc_turb_couple, &
     & find_production_rate, eta_construct
 
   contains
@@ -219,12 +219,12 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), dimension(n_eq), intent(inout) :: y
     real(dp), dimension(n_eq), intent(inout) :: f
 
-    real(dp) :: w_sh2, w_acc2, w_grav2, w_co2
+    real(dp) :: w_sh2, w_acc2, w_co2
     real(dp) :: f_coal, f_coag, f_turb
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
-    real(dp) :: m_h, r_h, Kn, beta
+    real(dp) :: m_h, r_h, Kn, beta, vf
 
     !! In this routine, you calculate the new fluxes (f) for each moment
     !! The values of each moment (y) are typically kept constant
@@ -250,30 +250,30 @@ module mini_haze_i_dlsode_mom_mod
     !! Cunningham slip factor
     beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
 
+    !! Settling velocity
+    vf = (2.0_dp * beta * grav * r_h**2 * rho_d)/(9.0_dp * eta) & 
+      & * (1.0_dp &
+      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+
     !! Calculate the coagulation loss rate for the zeroth moment
     call calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
     f_coag = max(1e-30_dp,f_coag)
 
     !! Calculate the coalesence loss rate for the zeroth moment
-    call calc_coal(n_eq, y, r_h, Kn, beta, f_coal)
+    call calc_coal(n_eq, y, r_h, Kn, vf, f_coal)
     f_coal = max(1e-30_dp,f_coal)
-
-    !! Start turbulent collision rate calculation
 
     !! Calculate the turbulent shear collision velocity
     call calc_turb_shear(n_eq, y, r_h, w_sh2)
 
     !! Calculate the turbulent acceleration collision velocity
-    call calc_turb_acc(n_eq, y, r_h, beta, w_acc2)
-
-    !! Calculate the turbulent gravity collision velocity
-    call calc_turb_gravity(n_eq, y, r_h, beta, w_grav2)
+    call calc_turb_acc(n_eq, y, vf, w_acc2)
 
     !! Calculate the turbulent fluid coupling collision velocity
-    call calc_turb_couple(n_eq, y, r_h, beta, w_co2)
+    call calc_turb_couple(n_eq, y, r_h, vf, w_co2)
 
     !! Combine turbulent velocities into collision rate using total kernel
-    f_turb = 4.0_dp * pi * r_h**2 * sqrt(2.0_dp/pi) * sqrt(w_sh2 + w_acc2 + w_grav2 + w_co2) * y(1)**2
+    f_turb = 4.0_dp * pi * r_h**2 * sqrt(2.0_dp/pi) * sqrt(w_sh2 + w_acc2 + w_co2) * y(1)**2
     f_turb = max(1e-30_dp,f_turb)
 
     !! Add thermal decomposition loss term if above given pressure level (pa)
@@ -325,91 +325,55 @@ module mini_haze_i_dlsode_mom_mod
 
     real(dp), intent(out) :: w_sh2
 
-    w_sh2 = 4.0_dp/15.0_dp * r_h**2 * eps_d/nu
+    w_sh2 = 1.0_dp/15.0_dp * (2.0_dp*r_h)**2 * eps_d/nu
 
   end subroutine calc_turb_shear
 
   !! Particle-particle turbulent acceleration collisions
-  subroutine calc_turb_acc(n_eq, y, r_h, beta, w_acc2)
+  subroutine calc_turb_acc(n_eq, y, vf, w_acc2)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h, beta
+    real(dp), intent(in) :: vf
 
     real(dp), intent(out) :: w_acc2
 
     real(dp), parameter :: gam = 10.0_dp
-    real(dp) :: vf2, tau_i, b, T_l, th_i, c1, c2
+    real(dp) :: u2, tau_i, b, T_l, th_i, c1, c2
 
-    vf2 = (gam * sqrt(eps_d*nu))/0.183_dp
-    tau_i = (2.0_dp * beta * rho_d * r_h**2)/(9.0_dp*eta)
+    u2 = (gam * sqrt(eps_d*nu))/0.183_dp
     b = (3.0_dp*rho)/(2.0_dp*rho_d + rho)
-    T_L = (0.4_dp*vf2)/eps_d
+    T_L = (0.4_dp*u2)/eps_d
 
+    tau_i = vf/grav
     th_i = tau_i/T_L
 
     c1 = sqrt((1.0_dp + th_i + th_i)/((1.0_dp + th_i)*(1.0_dp + th_i)))
     c2 = (1.0_dp/(((1.0_dp + th_i)*(1.0_dp + th_i))) - 1.0_dp/(((1.0_dp + gam*th_i)*(1.0_dp + gam*th_i))))
-    w_acc2 = 3.0_dp*(1.0_dp-b)**2*vf2*(gam/(gam-1.0_dp)) & 
+    w_acc2 = 3.0_dp*(1.0_dp-b)**2*u2*(gam/(gam-1.0_dp)) & 
       & * (((th_i + th_i)**2 - 4.0_dp*th_i*th_i*c1)/(th_i + th_i)) * c2
 
   end subroutine calc_turb_acc
 
-  !! Particle-particle turbulent gravity collisions
-  subroutine calc_turb_gravity(n_eq, y, r_h, beta, w_grav2)
-    implicit none
-
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h, beta
-
-    real(dp), intent(out) :: w_grav2
-
-    real(dp), parameter :: eps = 0.5_dp
-    real(dp) :: tau, dtau
-
-    tau = (2.0_dp*beta * rho_d*r_h**2)/(9.0_dp*eta)
-    dtau = eps * tau
-    w_grav2 = pi/8.0_dp * (1.0_dp - rho/rho_d)**2 * (eps*dtau)**2 * grav**2
-
-  end subroutine calc_turb_gravity
-
   !! Particle-particle turbulent fluid coupling collisions
-  subroutine calc_turb_couple(n_eq, y, r_h, beta, w_co2)
+  subroutine calc_turb_couple(n_eq, y, r_h, vf, w_co2)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h, beta
+    real(dp), intent(in) :: r_h, vf
 
     real(dp), intent(out) :: w_co2
 
     real(dp), parameter :: lam_d = 10.0_dp
     real(dp) :: dudt2, tau
 
-    tau = (2.0_dp*beta * rho_d*r_h**2)/(9.0_dp*eta)
+    tau = vf/grav
     dudt2 = 1.16_dp * eps_d**(1.5_dp)/sqrt(nu)
     w_co2 = 2.0_dp*(1.0_dp - rho/rho_d)**2 * tau**2 * dudt2 * ((2.0_dp*r_h)**2/lam_d**2)
 
   end subroutine calc_turb_couple
-
-  !! Monomer production rates from mass mixing ratio rate passed into module
-  subroutine find_production_rate(n_eq, f_prod, f_form)
-    implicit none
-
-    integer, intent(in) :: n_eq
-
-    real(dp), intent(in) :: f_form
-
-    real(dp), dimension(n_eq), intent(out) :: f_prod
-
-    f_prod(1) = f_form * (rho/(V_mon*rho_d))
-    f_prod(2) = f_form * rho
-    f_prod(3) = Prod_in
-    f_prod(4) = 0.0_dp
-
-  end subroutine find_production_rate
 
   !! Particle-particle Brownian coagulation
   subroutine calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
@@ -445,22 +409,17 @@ module mini_haze_i_dlsode_mom_mod
   end subroutine calc_coag
 
   !! Particle-particle gravitational coalesence
-  subroutine calc_coal(n_eq, y, r_h, Kn, beta, f_coal)
+  subroutine calc_coal(n_eq, y, r_h, Kn, vf, f_coal)
     implicit none
 
     integer, intent(in) :: n_eq
     real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h, Kn, beta
+    real(dp), intent(in) :: r_h, Kn, vf
 
     real(dp), intent(out) :: f_coal
 
-    real(dp) :: d_vf, vf, Stk, E
+    real(dp) :: d_vf, Stk, E
     real(dp), parameter :: eps = 0.5_dp
-
-    !! Settling velocity
-    vf = (2.0_dp * beta * grav * r_h**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp &
-      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
 
     !! Estimate differential velocity
     d_vf = eps * vf
@@ -479,6 +438,23 @@ module mini_haze_i_dlsode_mom_mod
     f_coal = 2.0_dp*pi*r_h**2*y(1)**2*d_vf*E
 
   end subroutine calc_coal
+
+  !! Monomer production rates from mass mixing ratio rate passed into module
+  subroutine find_production_rate(n_eq, f_prod, f_form)
+    implicit none
+
+    integer, intent(in) :: n_eq
+
+    real(dp), intent(in) :: f_form
+
+    real(dp), dimension(n_eq), intent(out) :: f_prod
+
+    f_prod(1) = f_form * (rho/(V_mon*rho_d))
+    f_prod(2) = f_form * rho
+    f_prod(3) = Prod_in
+    f_prod(4) = 0.0_dp
+
+  end subroutine find_production_rate
 
   !! Dummy jacobian subroutine required for dlsode
   subroutine jac_dum (NEQ, X, Y, ML, MU, PD, NROWPD)
