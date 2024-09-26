@@ -58,6 +58,7 @@ contains
       first_call = .False.
     end if
 
+    !! Atmospheric density [g cm-3] and number density [cm-3]
     rho = (P_in * 10.0_dp * mu_in * amu)/(kb * T_in)
     nd_atm = (P_in * 10.0_dp)/(kb * T_in)
 
@@ -68,14 +69,19 @@ contains
       return
     end if
 
+    !! Mean mass of particle [g]
     m_c = (q_1*rho)/(q_0*nd_atm)
 
+    !! Mean volume weighted particle size [cm]
     amean =  max(((3.0_dp*m_c)/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp), 1e-7_dp)
 
+    !! Number density of cloud particles
     n_d = q_0 * nd_atm
 
+    !! Cross section
     xsec = pi * amean**2
     
+    !! Mixing fraction of material in grain
     b_mix(:) = 1.0_dp
 
     do l = 1, n_wl
@@ -98,6 +104,7 @@ contains
         !! Use Rayleigh approximation
         call rayleigh(x, N_eff, q_abs, q_sca, q_ext, g)
       else if (x > 10.0_dp) then
+        !! Use modified anomalous diffraction theory
         call madt(x, N_eff, q_abs, q_sca, q_ext, g)
       else
         !! Call LX-MIE with negative k value

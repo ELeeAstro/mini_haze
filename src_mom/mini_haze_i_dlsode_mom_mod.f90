@@ -325,6 +325,7 @@ module mini_haze_i_dlsode_mom_mod
 
     real(dp), intent(out) :: w_sh2
 
+    !! Shear relative velocity (Wang et al. 1998)
     w_sh2 = 1.0_dp/15.0_dp * (2.0_dp*r_h)**2 * eps_d/nu
 
   end subroutine calc_turb_shear
@@ -342,6 +343,9 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), parameter :: gam = 10.0_dp
     real(dp) :: u2, tau_i, b, T_l, th_i, c1, c2
 
+    !! Follows Wang et al. (2001) 
+    !! - see also Park et el. (2002) and Kruis & Kusters (1997)
+
     u2 = (gam * sqrt(eps_d*nu))/0.183_dp
     b = (3.0_dp*rho)/(2.0_dp*rho_d + rho)
     T_L = (0.4_dp*u2)/eps_d
@@ -351,6 +355,7 @@ module mini_haze_i_dlsode_mom_mod
 
     c1 = sqrt((1.0_dp + th_i + th_i)/((1.0_dp + th_i)*(1.0_dp + th_i)))
     c2 = (1.0_dp/(((1.0_dp + th_i)*(1.0_dp + th_i))) - 1.0_dp/(((1.0_dp + gam*th_i)*(1.0_dp + gam*th_i))))
+
     w_acc2 = 3.0_dp*(1.0_dp-b)**2*u2*(gam/(gam-1.0_dp)) & 
       & * (((th_i + th_i)**2 - 4.0_dp*th_i*th_i*c1)/(th_i + th_i)) * c2
 
@@ -369,6 +374,7 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), parameter :: lam_d = 10.0_dp
     real(dp) :: dudt2, tau
 
+    !! Fluid coupling turbulent term (Wang et al. 1998)
     tau = vf/grav
     dudt2 = 1.16_dp * eps_d**(1.5_dp)/sqrt(nu)
     w_co2 = 2.0_dp*(1.0_dp - rho/rho_d)**2 * tau**2 * dudt2 * ((2.0_dp*r_h)**2/lam_d**2)
@@ -431,7 +437,7 @@ module mini_haze_i_dlsode_mom_mod
     else
       !! Calculate Stokes number
       Stk = (vf * d_vf)/(grav * r_h)
-      E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
+      E = max(1.0e-6_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
     end if
 
     !! Finally calculate the loss flux term
