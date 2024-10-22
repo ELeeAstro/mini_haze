@@ -49,7 +49,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
 
   !! Constuct required arrays for calculating gas mixtures
-  real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g
+  real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
   private :: calc_coal, calc_coag, calc_turb_acc, calc_turb_shear, calc_turb_couple, &
@@ -83,8 +83,7 @@ module mini_haze_i_dlsode_mom_mod
     real(dp) :: rtol, atol
 
     !! Work variables
-    integer :: n_gas
-    real(dp) :: eta_g, bot, top
+    integer :: n_bg
     real(dp), allocatable, dimension(:) :: VMR_g
 
     !! Alter input values to mini-haze units
@@ -95,8 +94,8 @@ module mini_haze_i_dlsode_mom_mod
     p = P_in * 10.0_dp   ! Convert pascal to dyne cm-2
 
     !! Background gas array
-    n_gas = size(bg_VMR_in)
-    allocate(VMR_g(n_gas))
+    n_bg = size(bg_VMR_in)
+    allocate(VMR_g(n_bg))
     VMR_g(:) = bg_VMR_in(:)
 
     !! Change mu_in to mu
@@ -112,18 +111,7 @@ module mini_haze_i_dlsode_mom_mod
     rho = (p*mu*amu)/(kb * T) ! Mass density [g cm-3]
 
     !! Calculate dynamical viscosity for this layer - do square root mixing law from Rosner 2012
-    call eta_construct(sp_bg)
-    top = 0.0_dp
-    bot = 0.0_dp
-    do n = 1, n_gas
-      eta_g = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T)/(pi*d_g(n)**2)) &
-        & * ((((kb*T)/LJ_g(n))**(0.16_dp))/1.22_dp)
-      top = top + sqrt(molg_g(n))*VMR_g(n)*eta_g
-      bot = bot + sqrt(molg_g(n))*VMR_g(n)
-    end do
-
-    !! Mixture dynamical viscosity
-    eta = top/bot
+    call eta_construct(n_bg, sp_bg, VMR_g, T, eta)
 
     !! Mixture kinematic viscosity
     nu = eta/rho
@@ -207,7 +195,7 @@ module mini_haze_i_dlsode_mom_mod
     !! Give y values to tracers
     q(:) = max(y(:),1e-30_dp)
 
-    deallocate(y, rwork, iwork, d_g, LJ_g, molg_g)
+    deallocate(y, rwork, iwork, d_g, LJ_g, molg_g, eta_g)
 
   end subroutine mini_haze_i_dlsode_mom
 
@@ -471,19 +459,23 @@ module mini_haze_i_dlsode_mom_mod
   end subroutine jac_dum
 
   !! eta for background gas
-  subroutine eta_construct(sp_bg)
+  subroutine eta_construct(n_bg, sp_bg, VMR_bg, T, eta_out)
     implicit none
 
+    integer, intent(in) :: n_bg
     character(len=20), dimension(:), intent(in) :: sp_bg
+    real(dp), dimension(n_bg), intent(in) :: VMR_bg
+    real(dp), intent(in) :: T
+
+    real(dp), intent(out) :: eta_out
     
-    integer :: n_bg, i
+    integer :: i, j, n
+    real(dp) :: eta_sum, phi_ij_top, phi_ij_bot, phi_ij
 
-    n_bg = size(sp_bg)
-
-    allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg))
+    allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg), eta_g(n_bg))
 
     do i = 1, n_bg
-      select case(sp_bg(i))
+      select case(trim(sp_bg(i)))
 
       case('OH')
         d_g(i) = d_OH
@@ -544,6 +536,26 @@ module mini_haze_i_dlsode_mom_mod
 
     end do
     
+    !! do Wilke (1950) classical mixing rule
+    !! First calculate each species eta
+    do n = 1, n_bg
+      eta_g(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T)/(pi*d_g(n)**2)) &
+        & * ((((kb*T)/LJ_g(n))**(0.16_dp))/1.22_dp)
+    end do
+
+    !! Find weighting factor for each species
+    eta_out = 0.0_dp
+    do i = 1, n_bg
+      eta_sum = 0.0_dp
+      do j = 1, n_bg
+        phi_ij_top = (1.0_dp + sqrt(eta_g(i)/eta_g(j)) * (molg_g(j)/molg_g(i))**(0.25_dp))**2
+        phi_ij_bot = sqrt(8.0_dp*(1.0_dp + (molg_g(i)/molg_g(j))))
+        phi_ij = phi_ij_top  / phi_ij_bot
+        eta_sum = eta_sum + VMR_bg(j) * phi_ij
+      end do
+      eta_out = eta_out + (VMR_bg(i) * eta_g(i)) / eta_sum
+    end do
+
   end subroutine eta_construct
 
 end module mini_haze_i_dlsode_mom_mod
