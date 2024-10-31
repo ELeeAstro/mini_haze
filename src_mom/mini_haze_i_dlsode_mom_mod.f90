@@ -28,10 +28,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: V_mon ! Haze particle monomer volume
   real(dp) :: m_mon ! Haze particle monomer mass
 
-  real(dp) :: mfp, eta, nu, eps_d
-
-  !! Kolmogorov scale
-  real(dp), parameter :: l_k = 1.0_dp
+  real(dp) :: mfp, eta, nu
 
   !! Diameter, LJ potential and molecular weight for background gases
   real(dp), parameter :: d_OH = 3.06e-8_dp, LJ_OH = 100.0_dp * kb, molg_OH = 17.00734_dp  ! estimate
@@ -52,8 +49,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
-  private :: calc_coal, calc_coag, calc_turb_acc, calc_turb_shear, calc_turb_couple, &
-    & find_production_rate, eta_construct
+  private :: calc_coal, calc_coag, find_production_rate, eta_construct
 
   contains
 
@@ -69,7 +65,7 @@ module mini_haze_i_dlsode_mom_mod
     ! Input/Output tracer values
     real(dp), dimension(n_eq), intent(inout) :: q
 
-    integer :: ncall, n
+    integer :: ncall
 
     ! Time controls
     real(dp) :: t_now
@@ -116,9 +112,6 @@ module mini_haze_i_dlsode_mom_mod
     !! Mixture kinematic viscosity
     nu = eta/rho
 
-    !! dissipation of turbulent kinetic energy
-    eps_d = nu**3/l_k**4
-
     !! Calculate mean free path for this layer
     mfp = (2.0_dp*eta/rho) * sqrt((pi * mu)/(8.0_dp*R_gas*T))
 
@@ -127,7 +120,6 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Haze particle momomer mass
     m_mon = rho_d * V_Mon
-
 
     ! -----------------------------------------
     ! ***  parameters for the DLSODE solver  ***
@@ -207,8 +199,7 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), dimension(n_eq), intent(inout) :: y
     real(dp), dimension(n_eq), intent(inout) :: f
 
-    real(dp) :: w_sh2, w_acc2, w_co2
-    real(dp) :: f_coal, f_coag, f_turb
+    real(dp) :: f_coal, f_coag
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
@@ -251,19 +242,6 @@ module mini_haze_i_dlsode_mom_mod
     call calc_coal(n_eq, y, r_h, Kn, vf, f_coal)
     f_coal = max(1e-30_dp,f_coal)
 
-    !! Calculate the turbulent shear collision velocity
-    call calc_turb_shear(n_eq, y, r_h, w_sh2)
-
-    !! Calculate the turbulent acceleration collision velocity
-    call calc_turb_acc(n_eq, y, vf, w_acc2)
-
-    !! Calculate the turbulent fluid coupling collision velocity
-    call calc_turb_couple(n_eq, y, r_h, vf, w_co2)
-
-    !! Combine turbulent velocities into collision rate using total kernel
-    f_turb = 4.0_dp * pi * r_h**2 * sqrt(2.0_dp/pi) * sqrt(w_sh2 + w_acc2 + w_co2) * y(1)**2
-    f_turb = max(1e-30_dp,f_turb)
-
     !! Add thermal decomposition loss term if above given pressure level (pa)
     if (p > p_deep) then
       f_loss(1) = y(1)/tau_loss
@@ -284,7 +262,7 @@ module mini_haze_i_dlsode_mom_mod
     call find_production_rate(n_eq, f_prod, f_form)
 
     !! Calculate final net flux rate for each tracer
-    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1) - f_turb
+    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1)
     f(2) = f_prod(2) - f_loss(2)
     f(3) = f_prod(3) - f_act - f_decay_pre
     f(4) = f_prod(4) + f_act - f_form - f_decay_act
@@ -302,72 +280,6 @@ module mini_haze_i_dlsode_mom_mod
     !print*, 'f2', f_coal, f_coag, f_loss, f_act, f_decay_pre, f_decay_act, f_form
 
   end subroutine RHS_mom
-
-  !! Particle-particle turbulent shear collisions
-  subroutine calc_turb_shear(n_eq, y, r_h, w_sh2)
-    implicit none
-
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h
-
-    real(dp), intent(out) :: w_sh2
-
-    !! Shear relative velocity (Wang et al. 1998)
-    w_sh2 = 1.0_dp/15.0_dp * (2.0_dp*r_h)**2 * eps_d/nu
-
-  end subroutine calc_turb_shear
-
-  !! Particle-particle turbulent acceleration collisions
-  subroutine calc_turb_acc(n_eq, y, vf, w_acc2)
-    implicit none
-
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: vf
-
-    real(dp), intent(out) :: w_acc2
-
-    real(dp), parameter :: gam = 10.0_dp
-    real(dp) :: u2, tau_i, b, T_l, th_i, c1, c2
-
-    !! Follows Wang et al. (2001) 
-    !! - see also Park et el. (2002) and Kruis & Kusters (1997)
-
-    u2 = (gam * sqrt(eps_d*nu))/0.183_dp
-    b = (3.0_dp*rho)/(2.0_dp*rho_d + rho)
-    T_L = (0.4_dp*u2)/eps_d
-
-    tau_i = vf/grav
-    th_i = tau_i/T_L
-
-    c1 = sqrt((1.0_dp + th_i + th_i)/((1.0_dp + th_i)*(1.0_dp + th_i)))
-    c2 = (1.0_dp/(((1.0_dp + th_i)*(1.0_dp + th_i))) - 1.0_dp/(((1.0_dp + gam*th_i)*(1.0_dp + gam*th_i))))
-
-    w_acc2 = 3.0_dp*(1.0_dp-b)**2*u2*(gam/(gam-1.0_dp)) & 
-      & * (((th_i + th_i)**2 - 4.0_dp*th_i*th_i*c1)/(th_i + th_i)) * c2
-
-  end subroutine calc_turb_acc
-
-  !! Particle-particle turbulent fluid coupling collisions
-  subroutine calc_turb_couple(n_eq, y, r_h, vf, w_co2)
-    implicit none
-
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
-    real(dp), intent(in) :: r_h, vf
-
-    real(dp), intent(out) :: w_co2
-
-    real(dp), parameter :: lam_d = 10.0_dp
-    real(dp) :: dudt2, tau
-
-    !! Fluid coupling turbulent term (Wang et al. 1998)
-    tau = vf/grav
-    dudt2 = 1.16_dp * eps_d**(1.5_dp)/sqrt(nu)
-    w_co2 = 2.0_dp*(1.0_dp - rho/rho_d)**2 * tau**2 * dudt2 * ((2.0_dp*r_h)**2/lam_d**2)
-
-  end subroutine calc_turb_couple
 
   !! Particle-particle Brownian coagulation
   subroutine calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
@@ -469,8 +381,9 @@ module mini_haze_i_dlsode_mom_mod
 
     real(dp), intent(out) :: eta_out
     
-    integer :: i, j, n
-    real(dp) :: eta_sum, phi_ij_top, phi_ij_bot, phi_ij
+    integer :: i, j
+    real(dp) :: bot, Eij, part
+    real(dp), dimension(n_bg) :: y
 
     allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg), eta_g(n_bg))
 
@@ -536,25 +449,33 @@ module mini_haze_i_dlsode_mom_mod
 
     end do
     
-    !! do Wilke (1950) classical mixing rule
+    !! Davidson (1993) mixing rule
+    
     !! First calculate each species eta
-    do n = 1, n_bg
-      eta_g(n) = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(n)*amu)*kb*T)/(pi*d_g(n)**2)) &
-        & * ((((kb*T)/LJ_g(n))**(0.16_dp))/1.22_dp)
+    do i = 1, n_bg
+      eta_g(i) = (5.0_dp/16.0_dp) * (sqrt(pi*(molg_g(i)*amu)*kb*T)/(pi*d_g(i)**2)) &
+        & * ((((kb*T)/LJ_g(i))**(0.16_dp))/1.22_dp)
     end do
 
-    !! Find weighting factor for each species
+    !! Calculate y values
+    bot = 0.0_dp
+    do i = 1, n_bg
+      bot = bot + VMR_bg(i) * sqrt(molg_g(i))
+    end do
+    y(:) = (VMR_bg(:) * sqrt(molg_g(:)))/bot
+
+    !! Calculate fluidity following Davidson equation
     eta_out = 0.0_dp
     do i = 1, n_bg
-      eta_sum = 0.0_dp
       do j = 1, n_bg
-        phi_ij_top = (1.0_dp + sqrt(eta_g(i)/eta_g(j)) * (molg_g(j)/molg_g(i))**(0.25_dp))**2
-        phi_ij_bot = sqrt(8.0_dp*(1.0_dp + (molg_g(i)/molg_g(j))))
-        phi_ij = phi_ij_top  / phi_ij_bot
-        eta_sum = eta_sum + VMR_bg(j) * phi_ij
+        Eij = ((2.0_dp*sqrt(molg_g(i)*molg_g(j)))/(molg_g(i) + molg_g(j)))**0.375
+        part = (y(i)*y(j))/(sqrt(eta_g(i)*eta_g(j))) * Eij
+        eta_out = eta_out + part
       end do
-      eta_out = eta_out + (VMR_bg(i) * eta_g(i)) / eta_sum
     end do
+
+    !! Viscosity is inverse fluidity
+    eta_out = 1.0_dp/eta_out
 
   end subroutine eta_construct
 
