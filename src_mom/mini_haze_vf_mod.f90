@@ -50,7 +50,7 @@ module mini_haze_vf_mod
     integer :: n_bg
     real(dp) :: T, mu, nd_atm, rho, p, grav, mfp, eta
     real(dp), allocatable, dimension(:) :: VMR_g
-    real(dp) :: m_h, r_h, Kn, beta
+    real(dp) :: m_h, r_h, Kn, beta, vf_s, vf_e, fx, cT
 
     !! Find the number density of the atmosphere
     T = T_in             ! Convert temperature to K
@@ -74,6 +74,9 @@ module mini_haze_vf_mod
     !! Mass density of layer
     rho = (p*mu*amu)/(kb * T) ! Mass density [g cm-3]
 
+    !! Thermal velocity
+    cT = sqrt((2.0_dp * kb * T) / (mu * amu))
+    
     !! Calculate dynamical viscosity for this layer - do square root mixing law from Rosner 2012
     n_bg = size(bg_VMR_in)
     allocate(VMR_g(n_bg))
@@ -93,13 +96,23 @@ module mini_haze_vf_mod
     !! Knudsen number
     Kn = mfp/r_h
 
-    !! Cunningham slip factor
-    beta = 1.0_dp + Kn*(1.257_dp + 0.4_dp * exp(-1.1_dp/Kn))
+    !! Cunningham slip factor (Kim et al. 2005)
+    beta = 1.0_dp + Kn*(1.165_dp + 0.483_dp * exp(-0.997_dp/Kn))
 
-    !! Settling velocity
-    v_f = (2.0_dp * beta * grav * r_h**2 * rho_d)/(9.0_dp * eta) & 
-      & * (1.0_dp + & 
-      & ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+    !! Settling velocity (Stokes regime)
+    vf_s = (2.0_dp * beta * grav * r_h**2 * (rho_d - rho))/(9.0_dp * eta) & 
+     & * (1.0_dp &
+     & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
+    vf_s = max(0.0_dp,vf_s)
+
+    !! Settling velocity (Epstein regime)
+    vf_e = (sqrt(pi)*grav*rho_d*r_h)/(2.0_dp*cT*rho)
+
+    !! tanh interpolation function
+    fx = 0.5_dp * (1.0_dp - tanh(2.0_dp*log10(Kn)))
+
+    !! Interpolation for settling velocity
+    v_f = fx*vf_s + (1.0_dp - fx)*vf_e
 
     deallocate(d_g, LJ_g, molg_g, eta_g)
 
