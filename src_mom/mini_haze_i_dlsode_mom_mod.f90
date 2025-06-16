@@ -229,8 +229,8 @@ module mini_haze_i_dlsode_mom_mod
     !! Knudsen number
     Kn = mfp/r_h
 
-    !! Cunningham slip factor (Kim et al. 2005)
-    beta = 1.0_dp + Kn*(1.165_dp + 0.483_dp * exp(-0.997_dp/Kn))
+    !! Cunningham slip factor (Jung et al. 2012)
+    beta = 1.0_dp + Kn*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn))
 
     !! Settling velocity (Stokes regime)
     vf_s = (2.0_dp * beta * grav * r_h**2 * (rho_d - rho))/(9.0_dp * eta) & 
