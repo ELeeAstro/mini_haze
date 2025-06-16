@@ -206,7 +206,7 @@ module mini_haze_i_dlsode_mom_mod
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
-    real(dp) :: m_h, r_h, Kn, beta, vf, vf_s, vf_e, fx
+    real(dp) :: m_h, r_h, Kn, Kn_b, beta, vf, vf_s, vf_e, fx
 
     !! In this routine, you calculate the new fluxes (f) for each moment
     !! The values of each moment (y) are typically kept constant
@@ -228,9 +228,10 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Knudsen number
     Kn = mfp/r_h
+    Kn_b = min(Kn, 100.0_dp)
 
     !! Cunningham slip factor (Jung et al. 2012)
-    beta = 1.0_dp + Kn*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn))
+    beta = 1.0_dp + Kn_b*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn_b))
 
     !! Settling velocity (Stokes regime)
     vf_s = (2.0_dp * beta * grav * r_h**2 * (rho_d - rho))/(9.0_dp * eta) & 
