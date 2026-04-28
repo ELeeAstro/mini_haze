@@ -95,27 +95,17 @@ module mini_haze_vf_mod
 
     !! Knudsen number
     Kn = mfp/r_h
-    Kn_b = min(Kn, 100.0_dp)
 
     !! Cunningham slip factor (Jung et al. 2012)
-    beta = 1.0_dp + Kn_b*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn_b))
+    beta = 1.0_dp + Kn*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn))
 
     !! Settling velocity (Stokes regime)
     vf_s = (2.0_dp * beta * grav * r_h**2 * (rho_d - rho))/(9.0_dp * eta) & 
      & * (1.0_dp &
      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
-    vf_s = max(0.0_dp,vf_s)
+    v_f = max(1e-30_dp,vf_s)
 
-    !! Settling velocity (Epstein regime)
-    vf_e = (sqrt(pi)*grav*rho_d*r_h)/(2.0_dp*cT*rho)
-
-    !! tanh interpolation function
-    fx = 0.5_dp * (1.0_dp - tanh(2.0_dp*log10(Kn)))
-
-    !! Interpolation for settling velocity
-    v_f = fx*vf_s + (1.0_dp - fx)*vf_e
-
-    deallocate(d_g, LJ_g, molg_g, eta_g)
+    deallocate(d_g, LJ_g, molg_g, eta_g, VMR_g)
 
   end subroutine mini_haze_vf
 

@@ -202,64 +202,52 @@ module mini_haze_i_dlsode_mom_mod
     real(dp), dimension(n_eq), intent(inout) :: y
     real(dp), dimension(n_eq), intent(inout) :: f
 
+    real(dp) :: N_h, rho_h
     real(dp) :: f_coal, f_coag
     real(dp) :: f_act, f_decay_pre, f_decay_act, f_form
     real(dp), dimension(2) :: f_loss
     real(dp), dimension(n_eq) ::  f_prod
-    real(dp) :: m_h, r_h, Kn, Kn_b, beta, vf, vf_s, vf_e, fx
+    real(dp) :: m_h, r_h, Kn, beta, vf, vf_s
 
     !! In this routine, you calculate the new fluxes (f) for each moment
     !! The values of each moment (y) are typically kept constant
     !! Basically, you solve for the RHS of the ODE for each moment
 
     !! Convert y to real numbers to calculate f
-    y(1) = y(1)*nd_atm ! Convert to real number density
-    y(2) = y(2)*rho   ! Convert to real mass density
+    N_h = y(1)*nd_atm ! Convert to real number density
+    rho_h = y(2)*rho   ! Convert to real mass density
 
     !! Find the RHS of the ODE for each moment
 
     !! Calculate coagulation and coalesence fluxes
 
     !! Mean mass of particle
-    m_h = max(y(2)/y(1), m_mon)
+    m_h = max(rho_h/N_h, m_mon)
 
     !! Mass weighted mean radius of particle
     r_h = max(((3.0_dp*m_h)/(4.0_dp*pi*rho_d))**(third), r_mon)
 
     !! Knudsen number
     Kn = mfp/r_h
-    Kn_b = min(Kn, 100.0_dp)
-
     !! Cunningham slip factor (Jung et al. 2012)
-    beta = 1.0_dp + Kn_b*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn_b))
+    beta = 1.0_dp + Kn*(1.165_dp + 0.480_dp * exp(-0.101_dp/Kn))
 
     !! Settling velocity (Stokes regime)
     vf_s = (2.0_dp * beta * grav * r_h**2 * (rho_d - rho))/(9.0_dp * eta) & 
      & * (1.0_dp &
      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
-    vf_s = max(0.0_dp,vf_s)
-
-    !! Settling velocity (Epstein regime)
-    vf_e = (sqrt(pi)*grav*rho_d*r_h)/(2.0_dp*cT*rho)
-
-    !! tanh interpolation function
-    fx = 0.5_dp * (1.0_dp - tanh(2.0_dp*log10(Kn)))
-
-    !! Interpolation for settling velocity
-    vf = fx*vf_s + (1.0_dp - fx)*vf_e
+    vf = max(1.0e-30_dp,vf_s)
 
     !! Calculate the coagulation loss rate for the zeroth moment
-    call calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
-    f_coag = max(1e-99_dp,f_coag)
+    call calc_coag(m_h, r_h, beta, f_coag)
 
     !! Calculate the coalesence loss rate for the zeroth moment
-    call calc_coal(n_eq, y, r_h, Kn, vf, f_coal)
-    f_coal = max(1e-99_dp,f_coal)
+    call calc_coal(r_h, Kn, vf, f_coal)
 
     !! Add thermal decomposition loss term if above given pressure level (pa)
     if (p > p_deep) then
-      f_loss(1) = max(1e-99_dp,y(1)/tau_loss)
-      f_loss(2) = max(1e-99_dp,y(2)/tau_loss)
+      f_loss(1) = max(1e-30_dp,N_h/tau_loss)
+      f_loss(2) = max(1e-30_dp,rho_h/tau_loss)
     else
       f_loss(1) = 0.0_dp
       f_loss(2) = 0.0_dp
@@ -275,7 +263,7 @@ module mini_haze_i_dlsode_mom_mod
     call find_production_rate(n_eq, f_prod, f_form)
 
     !! Calculate final net flux rate for each tracer
-    f(1) = f_prod(1) - f_coal - f_coag - f_loss(1)
+    f(1) = f_prod(1) + (f_coal + f_coag)*N_h**2 - f_loss(1)
     f(2) = f_prod(2) - f_loss(2)
     f(3) = f_prod(3) - f_act - f_decay_pre
     f(4) = f_prod(4) + f_act - f_form - f_decay_act
@@ -284,9 +272,6 @@ module mini_haze_i_dlsode_mom_mod
     f(1) = f(1)/nd_atm
     f(2) = f(2)/rho
       
-    !! Convert y back to ratios
-    y(1) = y(1)/nd_atm
-    y(2) = y(2)/rho 
 
     !print*, 'y', time, y(:), ((3.0_dp*y(2)/y(1))/(4.0_dp*pi*rho_d))**(1.0_dp/3.0_dp) * 1e4_dp
     !print*, 'f', f(:), f_prod(:)
@@ -295,19 +280,14 @@ module mini_haze_i_dlsode_mom_mod
   end subroutine RHS_mom
 
   !! Particle-particle Brownian coagulation
-  subroutine calc_coag(n_eq, y, m_h, r_h, beta, f_coag)
+  subroutine calc_coag(m_h, r_h, beta, f_coag)
     implicit none
 
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
     real(dp), intent(in) :: m_h, r_h, beta
 
     real(dp), intent(inout) :: f_coag
 
-    real(dp) :: phi, del_r, D_r, V_r, lam_r, gam
-
-    real(dp), parameter :: A1 = 9.55e5_dp
-    real(dp), parameter :: B1 = 0.345_dp*A1, C1 = 0.145_dp*A1, D1 = 1.11_dp*A1
+    real(dp) :: phi, D_r, V_r, Knd
 
     !! Particle diffusion rate
     D_r = (kb*T*beta)/(6.0_dp*pi*eta*r_h)
@@ -315,29 +295,22 @@ module mini_haze_i_dlsode_mom_mod
     !! Thermal velocity limit rate
     V_r = sqrt((8.0_dp*kb*T)/(pi*m_h))
 
-    !! Polovnikov, Azarov and Veshchunov (2016) approach
-    !! Gamma value - mono-disperse assumption
-    gam = (3.0_dp*D_r)/(r_h*V_r)
-
-    ! Interpolation expression - kernel is free molecular regime * phi
-    phi = (gam + A1*gam**2 + B1*gam**3)/(1.5_dp + C1*gam + D1*gam**2 + B1*gam**3) 
-
-    ! Coagulation flux (Zeroth moment) [cm-3 s-1]
-    f_coag = 8.0_dp * r_h**2 * sqrt((pi*kb*T)/m_h) * phi * y(1)**2
+    !! Moran (2022) method using diffusive Knudsen number
+    Knd = (8.0_dp*D_r)/(pi*V_r*r_h)
+    phi = 1.0_dp/sqrt(1.0_dp + pi**2/8.0_dp * Knd**2)
+    f_coag = (-4.0_dp*kb*T*beta)/(3.0_dp*eta) * phi 
 
   end subroutine calc_coag
 
   !! Particle-particle gravitational coalesence
-  subroutine calc_coal(n_eq, y, r_h, Kn, vf, f_coal)
+  subroutine calc_coal(r_h, Kn, vf, f_coal)
     implicit none
 
-    integer, intent(in) :: n_eq
-    real(dp), dimension(n_eq), intent(in) :: y 
     real(dp), intent(in) :: r_h, Kn, vf
 
     real(dp), intent(out) :: f_coal
 
-    real(dp) :: d_vf, Stk, E
+    real(dp) :: d_vf,  Stk, E
     real(dp), parameter :: eps = 0.5_dp
 
     !! Estimate differential velocity
@@ -350,11 +323,11 @@ module mini_haze_i_dlsode_mom_mod
     else
       !! Calculate Stokes number
       Stk = (vf * d_vf)/(grav * r_h)
-      E = max(0.0_dp, 1.0_dp - 0.42_dp*Stk**(-0.75_dp))
+      E = max(0.0_dp,1.0_dp - 0.42_dp*Stk**(-0.75_dp))
     end if
 
-    !! Finally calculate the loss flux term
-    f_coal = 2.0_dp*pi*r_h**2*y(1)**2*d_vf*E
+    !! Coalesence flux (Zeroth moment) [cm3 s-1]
+    f_coal = -2.0_dp*pi*r_h**2*d_vf*E
 
   end subroutine calc_coal
 
