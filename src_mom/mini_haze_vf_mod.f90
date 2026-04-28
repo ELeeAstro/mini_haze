@@ -50,7 +50,7 @@ module mini_haze_vf_mod
     integer :: n_bg
     real(dp) :: T, mu, nd_atm, rho, p, grav, mfp, eta
     real(dp), allocatable, dimension(:) :: VMR_g
-    real(dp) :: m_h, r_h, Kn, Kn_b, beta, vf_s, vf_e, fx, cT
+    real(dp) :: m_h, r_h, Kn, beta, vf_s, cT
 
     !! Find the number density of the atmosphere
     T = T_in             ! Convert temperature to K
