@@ -29,9 +29,6 @@ module mini_haze_vf_mod
   real(dp), parameter :: d_HCN = 3.630e-8_dp, LJ_HCN = 569.1_dp * kb, molg_HCN = 27.0253_dp
   real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
 
-  !! Constuct required arrays for calculating gas mixtures
-  real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
-
   public :: mini_haze_vf
   private :: eta_construct
 
@@ -105,7 +102,7 @@ module mini_haze_vf_mod
      & + ((0.45_dp*grav*r_h**3*rho*rho_d)/(54.0_dp*eta**2))**(0.4_dp))**(-1.25_dp)
     v_f = max(1e-30_dp,vf_s)
 
-    deallocate(d_g, LJ_g, molg_g, eta_g, VMR_g)
+    deallocate(VMR_g)
 
   end subroutine mini_haze_vf
 
@@ -123,6 +120,7 @@ module mini_haze_vf_mod
     integer :: i, j
     real(dp) :: bot, Eij, part
     real(dp), dimension(n_bg) :: y
+    real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
 
     allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg), eta_g(n_bg))
 
@@ -216,6 +214,8 @@ module mini_haze_vf_mod
 
     !! Viscosity is inverse fluidity
     eta_out = 1.0_dp/eta_out
+
+    deallocate(d_g, LJ_g, molg_g, eta_g)
 
   end subroutine eta_construct
 

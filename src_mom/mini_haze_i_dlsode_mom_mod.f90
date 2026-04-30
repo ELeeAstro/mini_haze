@@ -29,6 +29,7 @@ module mini_haze_i_dlsode_mom_mod
   real(dp) :: m_mon ! Haze particle monomer mass
 
   real(dp) :: mfp, eta, nu, cT
+  !$omp threadprivate(T, mu, nd_atm, rho, p, grav, Prod_in, r_mon, rho_d, p_deep, tau_loss, tau_decay, tau_act, tau_form, V_mon, m_mon, mfp, eta, nu, cT)
 
   !! Diameter, LJ potential and molecular weight for background gases
   real(dp), parameter :: d_OH = 3.06e-8_dp, LJ_OH = 100.0_dp * kb, molg_OH = 17.00734_dp  ! estimate
@@ -44,9 +45,6 @@ module mini_haze_i_dlsode_mom_mod
   real(dp), parameter :: d_N2 = 3.798e-8_dp, LJ_N2 = 71.4_dp * kb, molg_N2 = 14.0067_dp
   real(dp), parameter :: d_HCN = 3.630e-8_dp, LJ_HCN = 569.1_dp * kb, molg_HCN = 27.0253_dp
   real(dp), parameter :: d_He = 2.511e-8_dp, LJ_He = 10.22_dp * kb, molg_He = 4.002602_dp
-
-  !! Constuct required arrays for calculating gas mixtures
-  real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
 
   public :: mini_haze_i_dlsode_mom, RHS_mom, jac_dum
   private :: calc_coal, calc_coag, find_production_rate, eta_construct
@@ -190,7 +188,7 @@ module mini_haze_i_dlsode_mom_mod
     !! Give y values to tracers
     q(:) = max(y(:),1e-30_dp)
 
-    deallocate(y, rwork, iwork, d_g, LJ_g, molg_g, eta_g)
+    deallocate(y, rwork, iwork)
 
   end subroutine mini_haze_i_dlsode_mom
 
@@ -370,6 +368,7 @@ module mini_haze_i_dlsode_mom_mod
     integer :: i, j
     real(dp) :: bot, Eij, part
     real(dp), dimension(n_bg) :: y
+    real(dp), allocatable, dimension(:) :: d_g, LJ_g, molg_g, eta_g
 
     allocate(d_g(n_bg), LJ_g(n_bg), molg_g(n_bg), eta_g(n_bg))
 
@@ -462,6 +461,8 @@ module mini_haze_i_dlsode_mom_mod
 
     !! Viscosity is inverse fluidity
     eta_out = 1.0_dp/eta_out
+
+    deallocate(d_g, LJ_g, molg_g, eta_g)
 
   end subroutine eta_construct
 
